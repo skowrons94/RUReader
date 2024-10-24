@@ -46,27 +46,28 @@ private:
   std::map<int,DataFrame> frames;
   std::map<int,std::map<int,uint32_t>>  RO;
   
-  std::map<int,TTree*>  fTree;                   
+  TTree*  fTree;                   
 
-  std::map<int,bool>       fPu;
-  std::map<int,uint16_t>   fChannel;
-  std::map<int,uint64_t>   fTimeStamp;
-  std::map<int,uint16_t>   fEnergies;
-  std::map<int,uint16_t>   fQLong;
-  std::map<int,uint16_t>   fQShort;
-  std::map<int,uint32_t>   fExtras;
-  std::map<int,uint32_t>   fExtras2;
-  
+  bool fPu;
+  uint16_t  fBoard;
+  uint16_t  fChannel;
+  uint64_t  fTimeStamp;
+  uint16_t  fEnergies;
+  uint16_t  fQLong;
+  uint16_t  fQShort;
+  uint32_t  fExtras;
+  uint32_t  fExtras2;
+
   std::map<int,std::vector<TH1F*>>   fEnergy;    // Container for histograms
   std::map<int,std::vector<TH1F*>>   fQshort;    // Container for histograms
   std::map<int,std::vector<TH1F*>>   fQlong;     // Container for histograms
 
-  std::map<int,std::vector<short>>   fWave1;     // Container for waveform 1
-  std::map<int,std::vector<short>>   fWave2;     // Container for waveform 2
-  std::map<int,std::vector<bool>>    fDigital11;  // Container for digital probe 1
-  std::map<int,std::vector<bool>>    fDigital12;  // Container for digital probe 2
-  std::map<int,std::vector<bool>>    fDigital21;  // Container for digital probe 1
-  std::map<int,std::vector<bool>>    fDigital22;  // Container for digital probe 2
+  std::vector<short>   fWave1;     // Container for waveform 1
+  std::vector<short>   fWave2;     // Container for waveform 2
+  std::vector<bool>    fDigital11;  // Container for digital probe 1
+  std::vector<bool>    fDigital12;  // Container for digital probe 2
+  std::vector<bool>    fDigital21;  // Container for digital probe 1
+  std::vector<bool>    fDigital22;  // Container for digital probe 2
 
   uint32_t boardFailFlag;
   uint32_t aggregateCounter;
@@ -102,7 +103,7 @@ private:
   std::string fileOutName;
 
   // Miscellaneous
-  std::map<int,bool> fWave;
+  bool fWave;
   
 };
 

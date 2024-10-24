@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0)
 project(RUReader VERSION 1.0 LANGUAGES CXX)
 
-set(CMAKE_INSTALL_DIR /usr/bin/RUReader)
+set(CMAKE_INSTALL_DIR /usr/local/bin)
 
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(HEADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)

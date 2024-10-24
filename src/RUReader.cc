@@ -62,28 +62,30 @@ void RUReader::InitializeROOT( ){
 
     }
 
-    if( dgtzDppType[bIdx] == CAEN_DGTZ_DPPFirmware_PHA ){
-      fTree[bIdx] = new TTree(dgtzName[bIdx].c_str( ),dgtzName[bIdx].c_str( ));
-      fTree[bIdx]->Branch( "pu"       ,        &fPu[bIdx],        "pu/O" );
-      fTree[bIdx]->Branch( "channel"  ,   &fChannel[bIdx],   "channel/s" );
-      fTree[bIdx]->Branch( "timeStamp", &fTimeStamp[bIdx], "timeStamp/l" );
-      fTree[bIdx]->Branch( "energy"   ,  &fEnergies[bIdx],    "energy/s" );
-      fTree[bIdx]->Branch( "extras"   ,    &fExtras[bIdx],    "extras/i" );
-      fTree[bIdx]->Branch( "extras2"  ,   &fExtras2[bIdx],   "extras2/i" );
-      fTree[bIdx]->SetMaxVirtualSize(1000000000LL);
-    }
-    else if( dgtzDppType[bIdx] == CAEN_DGTZ_DPPFirmware_PSD ){
-      fTree[bIdx] = new TTree(dgtzName[bIdx].c_str( ),dgtzName[bIdx].c_str( ));
-      fTree[bIdx]->Branch( "pu"       ,        &fPu[bIdx],        "pu/O" );
-      fTree[bIdx]->Branch( "channel"  ,   &fChannel[bIdx],   "channel/s" );
-      fTree[bIdx]->Branch( "timeStamp", &fTimeStamp[bIdx], "timeStamp/l" );
-      fTree[bIdx]->Branch( "qShort"   ,    &fQShort[bIdx],    "qShort/s" );
-      fTree[bIdx]->Branch( "qLong"    ,     &fQLong[bIdx],     "qLong/s" );
-      fTree[bIdx]->Branch( "extras"   ,    &fExtras[bIdx],    "extras/i" );
-      fTree[bIdx]->SetMaxVirtualSize(1000000000LL);
-    }
-
   }
+
+  if( dgtzDppType[0] == CAEN_DGTZ_DPPFirmware_PHA ){
+      fTree = new TTree("DataR","DataR");
+      fTree->Branch( "PU"       ,        &fPu,        "PU/O" );
+      fTree->Branch( "Board"    ,     &fBoard,     "Board/s" );
+      fTree->Branch( "Channel"  ,   &fChannel,   "Channel/s" );
+      fTree->Branch( "TimeStamp", &fTimeStamp, "TimeStamp/l" );
+      fTree->Branch( "Energy"   ,  &fEnergies,    "Energy/s" );
+      fTree->Branch( "Flags"    ,    &fExtras,     "Flags/i" );
+      fTree->Branch( "Extras2"  ,   &fExtras2,   "Extras2/i" );
+      fTree->SetMaxVirtualSize(1000000000LL);
+    }
+    else if( dgtzDppType[0] == CAEN_DGTZ_DPPFirmware_PSD ){
+      fTree = new TTree("DataR","DataR");
+      fTree->Branch( "PU"       ,        &fPu,        "PU/O" );
+      fTree->Branch( "Board"    ,     &fBoard,     "Board/s" );
+      fTree->Branch( "Channel"  ,   &fChannel,   "Channel/s" );
+      fTree->Branch( "TimeStamp", &fTimeStamp, "TimeStamp/l" );
+      fTree->Branch( "QShort"   ,    &fQShort,    "QShort/s" );
+      fTree->Branch( "QLong"    ,     &fQLong,     "QLong/s" );
+      fTree->Branch( "Flags"    ,    &fExtras,     "Flags/i" );
+      fTree->SetMaxVirtualSize(1000000000LL);
+    }
 
 }
 
@@ -91,35 +93,35 @@ void RUReader::InitializeWave( int bIdx, uint32_t length, bool fDual ){
 
   //std::cout << "Initializing the waves..." << std::endl;
 
-  fWave[bIdx] = true;
+  fWave = true;
   
   if( fDual ){
 
-    fWave1[bIdx].resize( length );
-    fWave2[bIdx].resize( length );
-    fDigital11[bIdx].resize( length );
-    fDigital12[bIdx].resize( length );
-    fDigital21[bIdx].resize( length );
-    fDigital22[bIdx].resize( length );
+    fWave1.resize( length );
+    fWave2.resize( length );
+    fDigital11.resize( length );
+    fDigital12.resize( length );
+    fDigital21.resize( length );
+    fDigital22.resize( length );
     
-    fTree[bIdx]->Branch( "fWave1",          &fWave1[bIdx] );
-    fTree[bIdx]->Branch( "fWave2",          &fWave2[bIdx] );
-    fTree[bIdx]->Branch( "fDigital1_1", &fDigital11[bIdx] );
-    fTree[bIdx]->Branch( "fDigital1_2", &fDigital12[bIdx] );
-    fTree[bIdx]->Branch( "fDigital2_1", &fDigital21[bIdx] );
-    fTree[bIdx]->Branch( "fDigital2_2", &fDigital22[bIdx] );
+    fTree->Branch( "fWave1",          &fWave1 );
+    fTree->Branch( "fWave2",          &fWave2 );
+    fTree->Branch( "fDigital1_1", &fDigital11 );
+    fTree->Branch( "fDigital1_2", &fDigital12 );
+    fTree->Branch( "fDigital2_1", &fDigital21 );
+    fTree->Branch( "fDigital2_2", &fDigital22 );
     
   }
 
   else{
  
-    fWave1[bIdx].resize( 2*length );
-    fDigital11[bIdx].resize( 2*length );
-    fDigital21[bIdx].resize( 2*length );
+    fWave1.resize( 2*length );
+    fDigital11.resize( 2*length );
+    fDigital21.resize( 2*length );
 
-    fTree[bIdx]->Branch( "fWave",         &fWave1[bIdx] );
-    fTree[bIdx]->Branch( "fDigital1", &fDigital11[bIdx] );
-    fTree[bIdx]->Branch( "fDigital2", &fDigital21[bIdx] );
+    fTree->Branch( "fWave",         &fWave1 );
+    fTree->Branch( "fDigital1", &fDigital11 );
+    fTree->Branch( "fDigital2", &fDigital21 );
     
   }
   
@@ -248,13 +250,14 @@ void RUReader::UnpackPHA( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
       // Filling ROOT files
       fEnergy[board][chanNum]->Fill(energy);
       
-      fPu[board]        = pur;
-      fEnergies[board]  = energy;
-      fTimeStamp[board] = tstamp;
-      fChannel[board]   = chanNum;
-      fExtras[board]    = extras;
-      fExtras2[board]   = extras2;
-      fTree[board]->Fill( );
+      fPu        = pur;
+      fBoard     = board;
+      fEnergies  = energy;
+      fTimeStamp = tstamp;
+      fChannel   = chanNum;
+      fExtras    = extras;
+      fExtras2   = extras2;
+      fTree->Fill( );
 
     }
 
@@ -367,13 +370,13 @@ void RUReader::UnpackPSD( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
       fQshort[board][chanNum]->Fill(qshort);
       fQlong[board][chanNum]->Fill(qlong);
       
-      fPu[board]        = pur;
-      fQShort[board]    = qshort;
-      fQLong[board]     = qlong;
-      fTimeStamp[board] = tstamp;
-      fChannel[board]   = chanNum;
-      fExtras[board]    = extras;
-      fTree[board]->Fill( );
+      fPu        = pur;
+      fQShort    = qshort;
+      fQLong     = qlong;
+      fTimeStamp = tstamp;
+      fChannel   = chanNum;
+      fExtras    = extras;
+      fTree->Fill( );
 
     }
       
@@ -392,26 +395,26 @@ void RUReader::UnpackWave(uint32_t* inpBuffer, uint32_t& board, DataFrame& dataF
   std::pair<int,int> formatDP1    = dataForm.GetFormat( "DP1" );
   std::pair<int,int> formatDP2    = dataForm.GetFormat( "DP2" );
 
-  if( !fWave[board] ){
+  if( !fWave ){
     InitializeWave( board, numSamples, dataForm.CheckEnabled( "DT" ) );
   }
   for( int idx = 0; idx < numSamples; ++idx ){
     ++samplePos;
     if( dataForm.CheckEnabled( "DT" ) ){
-      fWave1[board][idx]     = static_cast<short>(project_range( formatSample.first   , formatSample.second   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fWave2[board][idx]     = static_cast<short>(project_range( formatSample.first+16, formatSample.second+16, std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital11[board][idx] = static_cast<bool>(project_range(  formatDP1.first      , formatDP1.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital12[board][idx] = static_cast<bool>(project_range(  formatDP1.first+16   , formatDP1.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital21[board][idx] = static_cast<bool>(project_range(  formatDP2.first      , formatDP2.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital21[board][idx] = static_cast<bool>(project_range(  formatDP2.first+16   , formatDP2.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fWave1[idx]     = static_cast<short>(project_range( formatSample.first   , formatSample.second   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fWave2[idx]     = static_cast<short>(project_range( formatSample.first+16, formatSample.second+16, std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital11[idx] = static_cast<bool>(project_range(  formatDP1.first      , formatDP1.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital12[idx] = static_cast<bool>(project_range(  formatDP1.first+16   , formatDP1.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital21[idx] = static_cast<bool>(project_range(  formatDP2.first      , formatDP2.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital21[idx] = static_cast<bool>(project_range(  formatDP2.first+16   , formatDP2.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
     }
     else{
-      fWave1[board][2*idx]       = static_cast<short>(project_range( formatSample.first   , formatSample.second   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fWave1[board][2*idx+1]     = static_cast<short>(project_range( formatSample.first+16, formatSample.second+16, std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital11[board][2*idx]   = static_cast<short>(project_range( formatDP1.first      , formatDP1.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital11[board][2*idx+1] = static_cast<short>(project_range( formatDP1.first+16   , formatDP1.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital21[board][2*idx]   = static_cast<short>(project_range( formatDP2.first      , formatDP2.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital21[board][2*idx+1] = static_cast<short>(project_range( formatDP2.first+16   , formatDP2.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fWave1[2*idx]       = static_cast<short>(project_range( formatSample.first   , formatSample.second   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fWave1[2*idx+1]     = static_cast<short>(project_range( formatSample.first+16, formatSample.second+16, std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital11[2*idx]   = static_cast<short>(project_range( formatDP1.first      , formatDP1.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital11[2*idx+1] = static_cast<short>(project_range( formatDP1.first+16   , formatDP1.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital21[2*idx]   = static_cast<short>(project_range( formatDP2.first      , formatDP2.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital21[2*idx+1] = static_cast<short>(project_range( formatDP2.first+16   , formatDP2.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
     }
 
   }
@@ -459,7 +462,7 @@ uint64_t RUReader::ReadHeader( std::ifstream& input ){
     frames[i].Build( );
     for( int ch = 0; ch < channels; ++ ch )
       RO[i][ch] = 0;
-    fWave[i] = false;
+    fWave = false;
 
   }
 
@@ -592,9 +595,7 @@ void RUReader::Write( ){
   v.Write( "StartEpoch" );
 
   fileOut->cd( );
-  for( auto it : fTree ){
-    it.second->Write( 0, TObject::kOverwrite );
-  }
+  fTree->Write( 0, TObject::kOverwrite );
 
   fileOut->Close( );
 
