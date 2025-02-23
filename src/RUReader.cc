@@ -17,52 +17,13 @@ RUReader::RUReader( std::map<int,std::string> name ){
 }
 
 RUReader::~RUReader(){
-
-  // Clean up
-  fEnergy.clear();
-  fQshort.clear();
-  fQlong.clear();
   
 }
 
 void RUReader::InitializeROOT( ){
 
-  // Initializing ROOT objects
-  //std::cout << "Initializing ROOT objects..." << std::endl;
-
   // Creating ROOT file
   fileOut = new TFile( fileOutName.c_str( ), "RECREATE" ); 
-
-  for( auto it : dgtzChans ){ 
-
-    int bIdx     = it.first;
-    int channels = it.second;
-
-    for(UInt_t j = 0 ; j < channels; j++){
-      if( dgtzDppType[bIdx] == CAEN_DGTZ_DPPFirmware_PHA ){
-        fEnergy[bIdx].push_back(new TH1F(Form("hEnergy_%i_%i",bIdx,j),
-			          Form("Energy Board %i Channel %i",bIdx,j),
-			          32768,0,32768));
-        fEnergy[bIdx].back()->SetXTitle("Energy [channels]");
-        fEnergy[bIdx].back()->SetYTitle("Counts / channel");
-      }
-      else if( dgtzDppType[bIdx] == CAEN_DGTZ_DPPFirmware_PSD ){
-        fQshort[bIdx].push_back(new TH1F(Form("hQshort_%i_%i",bIdx,j),
-			          Form("Qshort Board %i Channel %i",bIdx,j),
-			          32768,0,32768));
-        fQlong[bIdx].push_back(new TH1F(Form("hQlong_%i_%i",bIdx,j),
-			          Form("Qlong Board %i Channel %i",bIdx,j),
-			          65535,0,65535));
-      
-        fQshort[bIdx].back()->SetXTitle("Qshort [channels]");
-        fQshort[bIdx].back()->SetYTitle("Counts / channel");
-        fQlong[bIdx].back()->SetXTitle("Qlong [channels]");
-        fQlong[bIdx].back()->SetYTitle("Counts / channel");
-      }
-
-    }
-
-  }
 
   if( dgtzDppType[0] == CAEN_DGTZ_DPPFirmware_PHA ){
       fTree = new TTree("DataR","DataR");
@@ -136,6 +97,16 @@ void RUReader::UnpackHeader( uint32_t* inpBuffer, uint32_t& aggLength, uint32_t&
   channelMask                = inpBuffer[1+offset]&0xFF;
   aggregateCounter           = inpBuffer[2+offset]&0x7FFFFF;
   aggregateTimeTag           = inpBuffer[3+offset];
+
+  if( fVerbose ){
+
+    std::cout << "Aggregate Length: "   << aggLength        << std::endl;
+    std::cout << "Board: "              << board            << std::endl;
+    std::cout << "Channel Mask: "       << channelMask      << std::endl;
+    std::cout << "Aggregate Counter: "  << aggregateCounter << std::endl;
+    std::cout << "Aggregate Time Tag: " << aggregateTimeTag << std::endl;
+
+  }
 
 }
 
@@ -246,9 +217,6 @@ void RUReader::UnpackPHA( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
       if( dataForm.CheckEnabled( "Trace" ) ){
         UnpackWave( inpBuffer, board, dataForm, startingPos+2+dataForm.EvtSize()*evt);
       }
-
-      // Filling ROOT files
-      fEnergy[board][chanNum]->Fill(energy);
       
       fPu        = pur;
       fBoard     = board;
@@ -258,6 +226,17 @@ void RUReader::UnpackPHA( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
       fExtras    = extras;
       fExtras2   = extras2;
       fTree->Fill( );
+
+      if( fVerbose ){
+
+        std::cout << "Board: " << board << std::endl;
+        std::cout << "Channel: " << chanNum << std::endl;
+        std::cout << "Energy: " << energy << std::endl;
+        std::cout << "Time Stamp: " << tstamp << std::endl;
+        std::cout << "Flags: " << extras << std::endl;
+        std::cout << "Extras: " << extras2 << std::endl;
+
+      }
 
     }
 
@@ -365,10 +344,6 @@ void RUReader::UnpackPSD( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
       if( dataForm.CheckEnabled( "Trace" ) ){
         UnpackWave( inpBuffer, board, dataForm, startingPos+2+dataForm.EvtSize()*evt);
       }
-
-      // Filling ROOT files
-      fQshort[board][chanNum]->Fill(qshort);
-      fQlong[board][chanNum]->Fill(qlong);
       
       fPu        = pur;
       fQShort    = qshort;
@@ -466,6 +441,15 @@ uint64_t RUReader::ReadHeader( std::ifstream& input ){
 
   }
 
+  if( fVerbose ){
+    
+    std::cout << "Number of boards: " << nboards << std::endl;
+    for( int i = 0; i < nboards; ++i ){
+      std::cout << "Board " << i << " has " << dgtzChans[i] << " channels." << std::endl;
+    }
+
+  }
+
   InitializeROOT( );
 
   return hSize*sizeof(uint32_t);
@@ -483,7 +467,7 @@ void RUReader::ReadData( std::ifstream& input, uint64_t pos ){
   input.seekg(0, std::ios::end);
   length = (uint64_t)input.tellg();
 
-  uint64_t buffSize = 1e8;
+  uint64_t buffSize = 1e10;
   char*    data = new char[buffSize];
 
   double progress;
@@ -513,6 +497,13 @@ void RUReader::ReadData( std::ifstream& input, uint64_t pos ){
       if( ( pos + offset*sizeof(uint32_t) ) >= length ){
 	      pos += offset*sizeof(uint32_t);
 	      break;
+      }
+
+      // Check if last bits are 1010
+      if( (((uint32_t*)data)[offset]>>24)!=0xa0 ){
+        ++offset;
+        std::cout << "Skipping data..." << std::endl;
+        continue;
       }
 
       UnpackHeader( (uint32_t*)data, aggLength, board, channelMask, offset );
@@ -556,38 +547,6 @@ void RUReader::Read( std::string in, std::string out ){
 void RUReader::Write( ){
 
   std::cout << "Saving data to ROOT file..." << std::endl;
-  
-  fileOut->cd( );
-
-  if( !fEnergy.empty( ) ){
-    fileOut->mkdir( "Energies" );
-    for( auto it1 : fEnergy ){
-      fileOut->cd( "Energies" );
-      for( auto it2 : it1.second ){
-        it2->Write( );
-      }
-    }
-  }
-
-  if( !fQlong.empty( ) ){
-    fileOut->mkdir( "Qlong" );
-    for( auto it1 : fQlong ){
-      fileOut->cd( "Qlong" );
-      for( auto it2 : it1.second ){
-        it2->Write( );
-      }
-    }
-  }
-
-  if( !fQshort.empty( ) ){
-    fileOut->mkdir( "Qshort" );
-    for( auto it1 : fQshort ){
-      fileOut->cd( "Qshort" );
-      for( auto it2 : it1.second ){
-        it2->Write( );
-      }
-    }
-  }
 
   fileOut->cd( );
   TVectorD v(1);

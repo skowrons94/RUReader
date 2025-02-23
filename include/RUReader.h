@@ -58,10 +58,6 @@ private:
   uint32_t  fExtras;
   uint32_t  fExtras2;
 
-  std::map<int,std::vector<TH1F*>>   fEnergy;    // Container for histograms
-  std::map<int,std::vector<TH1F*>>   fQshort;    // Container for histograms
-  std::map<int,std::vector<TH1F*>>   fQlong;     // Container for histograms
-
   std::vector<short>   fWave1;     // Container for waveform 1
   std::vector<short>   fWave2;     // Container for waveform 2
   std::vector<bool>    fDigital11;  // Container for digital probe 1
@@ -104,6 +100,9 @@ private:
 
   // Miscellaneous
   bool fWave;
+
+  // Verbose level
+  int fVerbose = 0;
   
 };
 
