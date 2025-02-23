@@ -1,6 +1,7 @@
 # Build directory
 build/*
 data/*
+test/*
 
 #VSCode files
 .vscode/settings.json
