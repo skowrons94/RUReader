@@ -7,18 +7,8 @@
 
 #include <CAENDigitizerType.h>
 
-#include <TGraph.h>
-#include <TVectorD.h>
-
 #include "RUReader.h"
 #include "Utils.h"
-
-// Convert time string to epoch time
-uint64_t ConvertToEpoch( std::string time ){
-  struct tm tm;
-  strptime( time.c_str( ), "%Y-%m-%d %H:%M:%S", &tm );
-  return mktime( &tm );
-}
 
 RUReader::RUReader( std::map<int,std::string> name ){
  
@@ -468,7 +458,7 @@ uint64_t RUReader::ReadHeader( std::ifstream& input ){
 
 void RUReader::ReadData( std::ifstream& input, uint64_t pos ){
 
-  std::cout << "Starting reading data..." << std::endl;
+  //std::cout << "Starting reading data..." << std::endl;
     
   std::bitset<8> channelMask;
   uint64_t size, length, offset;
@@ -481,7 +471,18 @@ void RUReader::ReadData( std::ifstream& input, uint64_t pos ){
   char*    data = new char[buffSize];
 
   double progress, temp = 0;
+  double temp_size = 0;
   ULong_t i, posBar, barWidth = 70;
+
+  // Set double precision
+  std::cout.precision( 1 );
+  std::cout << std::fixed;
+
+  // Get current time in epoch
+  time_t rawtime;
+  struct tm * timeinfo;
+  time ( &rawtime );
+  timeinfo = localtime ( &rawtime );
   while( pos < length ){
 
     input.seekg( pos, std::ios::beg );
@@ -494,6 +495,7 @@ void RUReader::ReadData( std::ifstream& input, uint64_t pos ){
       progress = (double)(pos + offset*sizeof(uint32_t))/(double)length;
       if( (int)(progress*100) % 1 == 0 && (int)(progress*100) != (int)(temp*100) ){
         temp = progress;
+        temp_size = pos + offset*sizeof(uint32_t);
         posBar = barWidth * progress;
         std::cout << "[";
         for( int k = 0; k < barWidth; ++k ){
@@ -501,7 +503,21 @@ void RUReader::ReadData( std::ifstream& input, uint64_t pos ){
 	        else if( k == posBar ) std::cout << ">";
 	        else std::cout << " ";
         }
-        std::cout << "] " << int( progress * 100 ) << "%\r";
+        std::cout << "] " << int( progress * 100 ) << "%   ";
+        
+        // Print size in megabytes
+        std::cout << "[ " << (double)(pos/1e6) << " MB / " << (double)(length/1e6) << " MB ]   ";
+
+        // Calculate speed
+        time_t rawtime2;
+        struct tm * timeinfo2;
+        time ( &rawtime2 );
+        timeinfo2 = localtime ( &rawtime2 );
+        double diff = difftime( rawtime2, rawtime );
+        double speed = (double)(temp_size/1e6)/diff;
+
+        std::cout << "Speed: " << speed << " MB/s " << "\r";
+
         std::cout.flush( );
       }
 
@@ -540,110 +556,15 @@ void RUReader::ReadData( std::ifstream& input, uint64_t pos ){
 void RUReader::Read( std::string in, std::string out ){
 
   fileOutName = out;
-  std::cout << "Starting reading header..." << std::endl;
+  //std::cout << "Starting reading header..." << std::endl;
   
   std::ifstream input( in.c_str( ), std::ios::binary );
 
   uint64_t pos = ReadHeader( input );
-  std::cout << "Header read." << std::endl;
+  //std::cout << "Header read." << std::endl;
   ReadData( input, pos );
 
-  std::cout << "Looking for current file in ";
-
-  // Check if current.txt exists
-  std::string path = in.substr( 0, in.find_last_of( "/" ) + 1 );
-  std::string currentFile = path + "current.txt";
-  std::ifstream inputCurrent( currentFile.c_str( ) );
-
-  std::cout << currentFile << "..." << std::endl;
-
-  if( inputCurrent.is_open( ) ){
-    std::string current;
-
-    // First read the header that is eg. "### Start time: 2025-02-28 12:27:23.743509 ###"
-    std::getline( inputCurrent, current );
-
-    //Extract the start time from the header
-    std::string startTimeStr = current.substr( 16, 26 );
-
-    std::cout << "Start time current: " << startTimeStr << std::endl;
-
-    // Check if in the correct format
-    if( startTimeStr.size( ) != 26 ){
-      std::cout << "Error: The current file is not in the correct format." << std::endl;
-    }
-    else{
-
-      // Convert to epoch time
-      uint64_t currentStartTime = ConvertToEpoch( startTimeStr );
-      int64_t dt = startTime - currentStartTime;
-
-      std::cout << "Start epoch CAEN: " << startTime << std::endl;
-      std::cout << "Start epoch TetrAMM: " << currentStartTime << std::endl;
-      std::cout << "Start time difference between TetrAMM and CAEN: " << dt << std::endl;
-
-      // Get last timestamp in the TTree with TTreeIndex
-      fTree->BuildIndex( "TimeStamp" );
-      fTree->GetEntry( fTree->GetEntries( ) - 1 );
-      uint64_t lastTimeStamp = fTimeStamp;
-
-      double seconds = lastTimeStamp / 1e8;
-
-      // Get last TetrAMM timestamp look at last line in the current file
-      std::string lastLine;
-      while( std::getline( inputCurrent, current ) ){
-        lastLine = current;
-      }
-
-      // Return to the beginning of the file
-      inputCurrent.clear( );
-
-      // Strip to \t
-      std::string::size_type pos = lastLine.find( '\t' );
-      double tetrammSeonds = std::stod( lastLine.substr( 0, pos ) );
-
-      std::cout << "Last TetrAMM timestamp: " << tetrammSeonds << std::endl;
-      std::cout << "Last CAEN timestamp: " << seconds << std::endl;
-
-      // If negative, print and exit
-      if( dt < 0 ){
-        std::cout << "Error: The current file is older than the input file." << std::endl;
-      }
-      else {
-
-        // Now read the ASCII table x y
-        TGraph* g = new TGraph( );
-        uint64_t totalCharge = 0;
-        double x, y, x_buff = 0, y_buff = 0;
-        while( inputCurrent >> x >> y ){
-          if( x < dt ) continue;
-          if( x > seconds ) break;
-          g->AddPoint( x - dt, y );
-          if( y_buff > 0 ){
-            totalCharge += (x - x_buff) * ( y + y_buff ) / 2;
-          }
-          x_buff = x;
-          y_buff = y;
-        }
-
-        // Write to ROOT file
-        fileOut->cd( );
-        g->Write( "Current" );
-
-        // Write total charge to ROOT file
-        TVectorD v(1);
-        v[0] = totalCharge;
-        v.Write( "Charge" );
-
-      }
-    }
-  }
-  else{
-    std::cout << "Error: The current file does not exist." << std::endl;
-    std::cout << "Looked in: " << currentFile << std::endl;
-  }
-
-  std::cout << "Finished reading the input filer." << std::endl;
+  //std::cout << "Finished reading the input filer." << std::endl;
   
   input.close( );
   
@@ -651,7 +572,7 @@ void RUReader::Read( std::string in, std::string out ){
 
 void RUReader::Write( ){
 
-  std::cout << "Saving data to ROOT file..." << std::endl;
+  //std::cout << "Saving data to ROOT file..." << std::endl;
 
   fileOut->cd( );
   TVectorD v(1);
@@ -663,6 +584,6 @@ void RUReader::Write( ){
 
   fileOut->Close( );
 
-  std::cout << "Saved data to ROOT file." << std::endl;
+  //std::cout << "Saved data to ROOT file." << std::endl;
 
 }
