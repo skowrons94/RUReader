@@ -1,28 +1,32 @@
+# Descritpion
+
+Simple C++ code to read the binaries from the LunaDAQ application based on XDAQ. The binaries consist in a initial header from XDAQ that contains the information on when the acquistion was started and the number of boards, followed by the board aggregates which structure is described in the DPP-PHA and DPP-PSD registers manuals (Section 2) of the CAEN boards.
+
 # Requirements
 
-Only a working ROOT installation is required.
+ROOT and Boost libraries are required. The Boost libraries should already be available if ROOT is correctly installed.
 
 # Build / Installation
 
 To build and install the repository:
 
 ```bash
-git clone https://baltig.infn.it/LUNA_DAQ/RUReader.git
-cd RUReader && mkdir build && cd build/
+git clone https://github.com/skowrons94/RUReader.git
+cd RUReader
+mkdir build 
+cd build/
 cmake ..
-make && sudo make install
+make 
+sudo make install
 ```
 
-The binaries will be installed in ```/opt/RUReader/```. You can add the ```export PATH=/opt/RUReader/${PATH}``` line to your ```bashrc``` file to start it from 
-terminal. As an alternative you can create a symlink:
-
-```bash
-ln -s /opt/RUReader/RUReader /usr/bin/RUReader
-```
+The binary will be installed in ```/usr/local/bin/```.
 
 ## Usage
-It is necessary to know ID and names of the boards that were used during the acquisition. For show help for the input arguments use:
+Example usage:
 
 ```bash
-RUReader --help
+build/RUReader -i ru_i1_0001_0000.caendat -o run1.root -d V1724 0
 ```
+
+If more than one board is present, add additional ```-d V1724 0``` where the first argument is the board name and the second is the board ID.
