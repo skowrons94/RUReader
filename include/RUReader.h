@@ -49,6 +49,8 @@ private:
   TTree*  fTree;                   
 
   bool fPu;
+  bool fSatu;
+  bool fLost;
   uint16_t  fBoard;
   uint16_t  fChannel;
   uint64_t  fTimeStamp;

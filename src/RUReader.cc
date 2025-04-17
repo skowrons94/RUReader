@@ -28,6 +28,8 @@ void RUReader::InitializeROOT( ){
   if( dgtzDppType[0] == CAEN_DGTZ_DPPFirmware_PHA ){
       fTree = new TTree("DataR","DataR");
       fTree->Branch( "PU"       ,        &fPu,        "PU/O" );
+      fTree->Branch( "SATU"     ,      &fSatu,      "SATU/O" );
+      fTree->Branch( "LOST"     ,      &fLost,      "LOST/O" );
       fTree->Branch( "Board"    ,     &fBoard,     "Board/s" );
       fTree->Branch( "Channel"  ,   &fChannel,   "Channel/s" );
       fTree->Branch( "TimeStamp", &fTimeStamp, "TimeStamp/l" );
@@ -39,6 +41,8 @@ void RUReader::InitializeROOT( ){
     else if( dgtzDppType[0] == CAEN_DGTZ_DPPFirmware_PSD ){
       fTree = new TTree("DataR","DataR");
       fTree->Branch( "PU"       ,        &fPu,        "PU/O" );
+      fTree->Branch( "SATU"     ,      &fSatu,      "SATU/O" );
+      fTree->Branch( "LOST"     ,      &fLost,      "LOST/O" );
       fTree->Branch( "Board"    ,     &fBoard,     "Board/s" );
       fTree->Branch( "Channel"  ,   &fChannel,   "Channel/s" );
       fTree->Branch( "TimeStamp", &fTimeStamp, "TimeStamp/l" );
@@ -219,6 +223,8 @@ void RUReader::UnpackPHA( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
       }
       
       fPu        = pur;
+      fSatu      = satu;
+      fLost      = lost;
       fBoard     = board;
       fEnergies  = energy;
       fTimeStamp = tstamp;
