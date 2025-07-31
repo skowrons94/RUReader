@@ -12,6 +12,7 @@
 #include <TObject.h>
 #include <TVectorD.h>
 #include <TMultiGraph.h>
+#include <TArrayS.h>
 
 #include "DataFrame.h"
 
@@ -60,12 +61,12 @@ private:
   uint32_t  fExtras;
   uint32_t  fExtras2;
 
-  std::vector<short>   fWave1;     // Container for waveform 1
-  std::vector<short>   fWave2;     // Container for waveform 2
-  std::vector<bool>    fDigital11;  // Container for digital probe 1
-  std::vector<bool>    fDigital12;  // Container for digital probe 2
-  std::vector<bool>    fDigital21;  // Container for digital probe 1
-  std::vector<bool>    fDigital22;  // Container for digital probe 2
+  TArrayS*   fWave1;     // Container for waveform 1
+  TArrayS*   fWave2;     // Container for waveform 2
+  TArrayS*   fDigital11;  // Container for digital probe 1
+  TArrayS*   fDigital12;  // Container for digital probe 2
+  TArrayS*   fDigital21;  // Container for digital probe 1
+  TArrayS*   fDigital22;  // Container for digital probe 2
 
   uint32_t boardFailFlag;
   uint32_t aggregateCounter;
@@ -102,6 +103,7 @@ private:
 
   // Miscellaneous
   bool fWave;
+  bool fWaveInitialized;
 
   // Verbose level
   int fVerbose = 0;

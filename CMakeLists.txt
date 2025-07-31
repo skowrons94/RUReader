@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 4.0)
 project(RUReader VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_INSTALL_DIR /usr/local/bin)

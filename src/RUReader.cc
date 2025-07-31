@@ -13,10 +13,25 @@
 RUReader::RUReader( std::map<int,std::string> name ){
  
   dgtzName = name;
+  fWave = false;
+  fWaveInitialized = false;
+  fWave1 = nullptr;
+  fWave2 = nullptr;
+  fDigital11 = nullptr;
+  fDigital12 = nullptr;
+  fDigital21 = nullptr;
+  fDigital22 = nullptr;
   
 }
 
 RUReader::~RUReader(){
+  
+  if( fWave1 ) delete fWave1;
+  if( fWave2 ) delete fWave2;
+  if( fDigital11 ) delete fDigital11;
+  if( fDigital12 ) delete fDigital12;
+  if( fDigital21 ) delete fDigital21;
+  if( fDigital22 ) delete fDigital22;
   
 }
 
@@ -58,36 +73,24 @@ void RUReader::InitializeWave( int bIdx, uint32_t length, bool fDual ){
 
   //std::cout << "Initializing the waves..." << std::endl;
 
-  fWave = true;
-  
-  if( fDual ){
-
-    fWave1.resize( length );
-    fWave2.resize( length );
-    fDigital11.resize( length );
-    fDigital12.resize( length );
-    fDigital21.resize( length );
-    fDigital22.resize( length );
+  if( !fWaveInitialized ){
+    fWave = true;
     
-    fTree->Branch( "fWave1",          &fWave1 );
-    fTree->Branch( "fWave2",          &fWave2 );
-    fTree->Branch( "fDigital1_1", &fDigital11 );
-    fTree->Branch( "fDigital1_2", &fDigital12 );
-    fTree->Branch( "fDigital2_1", &fDigital21 );
-    fTree->Branch( "fDigital2_2", &fDigital22 );
+    if( fDual ){
+      fTree->Branch( "fWave1",          &fWave1 );
+      fTree->Branch( "fWave2",          &fWave2 );
+      fTree->Branch( "fDigital1_1", &fDigital11 );
+      fTree->Branch( "fDigital1_2", &fDigital12 );
+      fTree->Branch( "fDigital2_1", &fDigital21 );
+      fTree->Branch( "fDigital2_2", &fDigital22 );
+    }
+    else{
+      fTree->Branch( "fWave",         &fWave1 );
+      fTree->Branch( "fDigital1", &fDigital11 );
+      fTree->Branch( "fDigital2", &fDigital21 );
+    }
     
-  }
-
-  else{
- 
-    fWave1.resize( 2*length );
-    fDigital11.resize( 2*length );
-    fDigital21.resize( 2*length );
-
-    fTree->Branch( "fWave",         &fWave1 );
-    fTree->Branch( "fDigital1", &fDigital11 );
-    fTree->Branch( "fDigital2", &fDigital21 );
-    
+    fWaveInitialized = true;
   }
   
 }
@@ -379,23 +382,50 @@ void RUReader::UnpackWave(uint32_t* inpBuffer, uint32_t& board, DataFrame& dataF
   if( !fWave ){
     InitializeWave( board, numSamples, dataForm.CheckEnabled( "DT" ) );
   }
+  
+  // Clean up previous TArrayS objects
+  if( fWave1 ) delete fWave1;
+  if( fWave2 ) delete fWave2;
+  if( fDigital11 ) delete fDigital11;
+  if( fDigital12 ) delete fDigital12;
+  if( fDigital21 ) delete fDigital21;
+  if( fDigital22 ) delete fDigital22;
+  
+  // Create new TArrayS objects with dynamic size for this event
+  if( dataForm.CheckEnabled( "DT" ) ){
+    fWave1 = new TArrayS( numSamples );
+    fWave2 = new TArrayS( numSamples );
+    fDigital11 = new TArrayS( numSamples );
+    fDigital12 = new TArrayS( numSamples );
+    fDigital21 = new TArrayS( numSamples );
+    fDigital22 = new TArrayS( numSamples );
+  }
+  else{
+    fWave1 = new TArrayS( 2*numSamples );
+    fDigital11 = new TArrayS( 2*numSamples );
+    fDigital21 = new TArrayS( 2*numSamples );
+    fWave2 = nullptr;
+    fDigital12 = nullptr;
+    fDigital22 = nullptr;
+  }
+  
   for( int idx = 0; idx < numSamples; ++idx ){
     ++samplePos;
     if( dataForm.CheckEnabled( "DT" ) ){
-      fWave1[idx]     = static_cast<short>(project_range( formatSample.first   , formatSample.second   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fWave2[idx]     = static_cast<short>(project_range( formatSample.first+16, formatSample.second+16, std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital11[idx] = static_cast<bool>(project_range(  formatDP1.first      , formatDP1.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital12[idx] = static_cast<bool>(project_range(  formatDP1.first+16   , formatDP1.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital21[idx] = static_cast<bool>(project_range(  formatDP2.first      , formatDP2.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital21[idx] = static_cast<bool>(project_range(  formatDP2.first+16   , formatDP2.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fWave1->GetArray()[idx]     = static_cast<short>(project_range( formatSample.first   , formatSample.second   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fWave2->GetArray()[idx]     = static_cast<short>(project_range( formatSample.first+16, formatSample.second+16, std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital11->GetArray()[idx] = static_cast<short>(project_range(  formatDP1.first      , formatDP1.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital12->GetArray()[idx] = static_cast<short>(project_range(  formatDP1.first+16   , formatDP1.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital21->GetArray()[idx] = static_cast<short>(project_range(  formatDP2.first      , formatDP2.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital22->GetArray()[idx] = static_cast<short>(project_range(  formatDP2.first+16   , formatDP2.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
     }
     else{
-      fWave1[2*idx]       = static_cast<short>(project_range( formatSample.first   , formatSample.second   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fWave1[2*idx+1]     = static_cast<short>(project_range( formatSample.first+16, formatSample.second+16, std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital11[2*idx]   = static_cast<short>(project_range( formatDP1.first      , formatDP1.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital11[2*idx+1] = static_cast<short>(project_range( formatDP1.first+16   , formatDP1.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital21[2*idx]   = static_cast<short>(project_range( formatDP2.first      , formatDP2.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
-      fDigital21[2*idx+1] = static_cast<short>(project_range( formatDP2.first+16   , formatDP2.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fWave1->GetArray()[2*idx]       = static_cast<short>(project_range( formatSample.first   , formatSample.second   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fWave1->GetArray()[2*idx+1]     = static_cast<short>(project_range( formatSample.first+16, formatSample.second+16, std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital11->GetArray()[2*idx]   = static_cast<short>(project_range( formatDP1.first      , formatDP1.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital11->GetArray()[2*idx+1] = static_cast<short>(project_range( formatDP1.first+16   , formatDP1.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital21->GetArray()[2*idx]   = static_cast<short>(project_range( formatDP2.first      , formatDP2.second      , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
+      fDigital21->GetArray()[2*idx+1] = static_cast<short>(project_range( formatDP2.first+16   , formatDP2.second+16   , std::bitset<32>(inpBuffer[samplePos])).to_ulong());
     }
 
   }
@@ -444,6 +474,7 @@ uint64_t RUReader::ReadHeader( std::ifstream& input ){
     for( int ch = 0; ch < channels; ++ ch )
       RO[i][ch] = 0;
     fWave = false;
+    fWaveInitialized = false;
 
   }
 
