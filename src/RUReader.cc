@@ -117,9 +117,10 @@ void RUReader::UnpackHeader( uint32_t* inpBuffer, uint32_t& aggLength, uint32_t&
     
     if( choice == 'y' || choice == 'Y' ){
       is_ignore_fail = true;
-      std::cout << "Continuing with ignore_fail flag set. Future failures will be ignored." << std::endl;
+      std::cout << "Continuing with ignore_fail flag set. Future failures will be ignored." << std::endl << std::endl;
     } else {
       std::cout << "Conversion stopped by user." << std::endl;
+      this->Write( );
       exit(1);
     }
   }
