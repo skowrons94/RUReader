@@ -10,9 +10,10 @@
 #include "RUReader.h"
 #include "Utils.h"
 
-RUReader::RUReader( std::map<int,std::string> name ){
+RUReader::RUReader( std::map<int,std::string> name, bool ignore_fail ){
  
   dgtzName = name;
+  is_ignore_fail = ignore_fail;
   fWave = false;
   fWaveInitialized = false;
   fWave1 = nullptr;
@@ -104,6 +105,24 @@ void RUReader::UnpackHeader( uint32_t* inpBuffer, uint32_t& aggLength, uint32_t&
   channelMask                = inpBuffer[1+offset]&0xFF;
   aggregateCounter           = inpBuffer[2+offset]&0x7FFFFF;
   aggregateTimeTag           = inpBuffer[3+offset];
+
+  // Check board fail flag
+  if( boardFailFlag && !is_ignore_fail ){
+    std::cout << "\n*** WARNING: Board with ID " << board << " has failed! ***" << std::endl;
+    std::cout << "Time stamps of following events might be misleading." << std::endl;
+    std::cout << "Do you want to continue? (y/n): ";
+    
+    char choice;
+    std::cin >> choice;
+    
+    if( choice == 'y' || choice == 'Y' ){
+      is_ignore_fail = true;
+      std::cout << "Continuing with ignore_fail flag set. Future failures will be ignored." << std::endl;
+    } else {
+      std::cout << "Conversion stopped by user." << std::endl;
+      exit(1);
+    }
+  }
 
   if( fVerbose ){
 

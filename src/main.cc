@@ -12,7 +12,8 @@ static void show_usage(std::string name)
             << "\t-h,--help\tShow this help message.\n"
             << "\t-d,--dgtz\tSpecify board name and board id.\n"
 	    << "\t-i,--in\t\tSpecify the input file.\n"
-	    << "\t-o,--out\tSpecify the output file."
+	    << "\t-o,--out\tSpecify the output file.\n"
+	    << "\t--ignore-fail\tIgnore board failure flags."
             << std::endl;
 }
 
@@ -23,6 +24,7 @@ int main( int argc, char* argv[] ){
   std::string fileOut   = "";
   std::string dgtzName  = "";
   std::map<int,std::string> dgtz;
+  bool ignore_fail      = false;
 
   std::string temp;
 
@@ -55,12 +57,18 @@ int main( int argc, char* argv[] ){
 	std::cerr << "-o --out options requires one argument." << std::endl;
 	return 1;
       }
-    } else ++i;
+    } else if (arg == "--ignore-fail") {
+      ignore_fail = true;
+    } else {
+      std::cerr << "Unknown option: " << arg << std::endl;
+      show_usage(argv[0]);
+      return 1;
+    }
      
   };
 
   if( dgtzName != "" ){
-    RUReader reader( dgtz );
+    RUReader reader( dgtz, ignore_fail );
     if( fileIn != "" ){
       if( fileOut != "" ){
 	reader.Read( fileIn, fileOut );

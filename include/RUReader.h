@@ -20,7 +20,7 @@ class RUReader {
 
 public:
   
-  RUReader( std::map<int,std::string> name );
+  RUReader( std::map<int,std::string> name, bool ignore_fail = false );
   ~RUReader( );
 
   void InitializeROOT( );
@@ -107,6 +107,9 @@ private:
 
   // Verbose level
   int fVerbose = 0;
+  
+  // Flag to ignore board failures
+  bool is_ignore_fail = false;
   
 };
 
