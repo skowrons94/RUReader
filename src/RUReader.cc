@@ -176,6 +176,12 @@ void RUReader::UnpackPHA( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
     coupleAggregateSize = project_range( format.first, format.second, std::bitset<32>( inpBuffer[pos] ) ).to_ulong( );
 
     dataForm.SetDataFormat(inpBuffer[startingPos+1]);
+
+    // If event size is 0, skip corrupted buffer
+    if( dataForm.EvtSize() == 0 ){
+      startingPos+=1;
+      continue;
+    }
     
     for(evt = 0 ; evt < (coupleAggregateSize-2)/dataForm.EvtSize();evt++){
 	      
@@ -316,6 +322,12 @@ void RUReader::UnpackPSD( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
     coupleAggregateSize = project_range( format.first, format.second, std::bitset<32>( inpBuffer[pos] ) ).to_ulong( );
 
     dataForm.SetDataFormat(inpBuffer[startingPos+1]);
+
+    // If event size is 0, skip corrupted buffer
+    if( dataForm.EvtSize() == 0 ){
+      startingPos+=1;
+      continue;
+    }
     
     for(uint16_t evt = 0 ; evt < (coupleAggregateSize-2)/dataForm.EvtSize();evt++){
 
