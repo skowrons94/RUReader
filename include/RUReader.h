@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <fstream>
+#include <chrono>
 
 #include <TH1.h>
 #include <TTree.h>
@@ -37,6 +38,8 @@ public:
 
   void Read( std::string in, std::string out );
   void Write( );
+
+  void PrintStatistics( );
   
 private:
 
@@ -110,6 +113,18 @@ private:
   
   // Flag to ignore board failures
   bool is_ignore_fail = false;
+
+  // Statistics tracking
+  struct Statistics {
+    uint64_t totalEvents = 0;
+    uint64_t totalBuffers = 0;
+    std::map<int, std::map<int, uint64_t>> eventsPerChannel; // [board][channel] = count
+    std::map<int, std::map<int, uint64_t>> lastTimestamp;    // [board][channel] = timestamp
+    uint64_t corruptedBuffers = 0;
+    uint64_t failedBoards = 0;
+    std::chrono::steady_clock::time_point startTime;
+    std::chrono::steady_clock::time_point endTime;
+  } stats;
   
 };
 

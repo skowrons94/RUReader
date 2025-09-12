@@ -4,6 +4,9 @@
 #include <string.h>
 #include <bitset>
 #include <sstream>
+#include <sys/stat.h>
+#include <chrono>
+#include <iomanip>
 
 #include <CAENDigitizerType.h>
 
@@ -22,6 +25,12 @@ RUReader::RUReader( std::map<int,std::string> name, bool ignore_fail ){
   fDigital12 = nullptr;
   fDigital21 = nullptr;
   fDigital22 = nullptr;
+
+  // Initialize statistics
+  stats.totalEvents = 0;
+  stats.totalBuffers = 0;
+  stats.corruptedBuffers = 0;
+  stats.failedBoards = 0;
   
 }
 
@@ -107,21 +116,24 @@ void RUReader::UnpackHeader( uint32_t* inpBuffer, uint32_t& aggLength, uint32_t&
   aggregateTimeTag           = inpBuffer[3+offset];
 
   // Check board fail flag
-  if( boardFailFlag && !is_ignore_fail ){
-    std::cout << "\n*** WARNING: Board with ID " << board << " has failed! ***" << std::endl;
-    std::cout << "Time stamps of following events might be misleading." << std::endl;
-    std::cout << "Do you want to continue? (y/n): ";
-    
-    char choice;
-    std::cin >> choice;
-    
-    if( choice == 'y' || choice == 'Y' ){
-      is_ignore_fail = true;
-      std::cout << "Continuing with ignore_fail flag set. Future failures will be ignored." << std::endl << std::endl;
-    } else {
-      std::cout << "Conversion stopped by user." << std::endl;
-      this->Write( );
-      exit(1);
+  if( boardFailFlag ){
+    stats.failedBoards++;
+    if( !is_ignore_fail ){
+      std::cout << "\n*** WARNING: Board with ID " << board << " has failed! ***" << std::endl;
+      std::cout << "Time stamps of following events might be misleading." << std::endl;
+      std::cout << "Do you want to continue? (y/n): ";
+      
+      char choice;
+      std::cin >> choice;
+      
+      if( choice == 'y' || choice == 'Y' ){
+        is_ignore_fail = true;
+        std::cout << "Continuing with ignore_fail flag set. Future failures will be ignored." << std::endl << std::endl;
+      } else {
+        std::cout << "Conversion stopped by user." << std::endl;
+        this->Write( );
+        exit(1);
+      }
     }
   }
 
@@ -179,6 +191,7 @@ void RUReader::UnpackPHA( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
 
     // If event size is 0, skip corrupted buffer
     if( dataForm.EvtSize() == 0 ){
+      stats.corruptedBuffers++;
       startingPos+=1;
       continue;
     }
@@ -262,6 +275,11 @@ void RUReader::UnpackPHA( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
       fExtras2   = extras2;
       fTree->Fill( );
 
+      // Update statistics
+      stats.totalEvents++;
+      stats.eventsPerChannel[board][chanNum]++;
+      stats.lastTimestamp[board][chanNum] = tstamp;
+
       if( fVerbose ){
 
         std::cout << "Board: " << board << std::endl;
@@ -325,6 +343,7 @@ void RUReader::UnpackPSD( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
 
     // If event size is 0, skip corrupted buffer
     if( dataForm.EvtSize() == 0 ){
+      stats.corruptedBuffers++;
       startingPos+=1;
       continue;
     }
@@ -393,6 +412,11 @@ void RUReader::UnpackPSD( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
       fChannel   = chanNum;
       fExtras    = extras;
       fTree->Fill( );
+
+      // Update statistics
+      stats.totalEvents++;
+      stats.eventsPerChannel[board][chanNum]++;
+      stats.lastTimestamp[board][chanNum] = tstamp;
 
     }
       
@@ -607,6 +631,8 @@ void RUReader::ReadData( std::ifstream& input, uint64_t pos ){
         break;
       }
 
+      stats.totalBuffers++;
+
       if( dgtzDppType[board] == CAEN_DGTZ_DPPFirmware_PHA )
         UnpackPHA( (uint32_t*)data, board, channelMask, offset );
       else if( dgtzDppType[board] == CAEN_DGTZ_DPPFirmware_PSD )
@@ -624,16 +650,45 @@ void RUReader::ReadData( std::ifstream& input, uint64_t pos ){
 
 void RUReader::Read( std::string in, std::string out ){
 
+  // File validation
+  struct stat buffer;
+  if( stat(in.c_str(), &buffer) != 0 ){
+    std::cerr << "ERROR: Input file '" << in << "' does not exist!" << std::endl;
+    exit(1);
+  }
+
+  if( buffer.st_size == 0 ){
+    std::cerr << "ERROR: Input file '" << in << "' is empty!" << std::endl;
+    exit(1);
+  }
+
+  // Check if output directory exists
+  size_t lastSlash = out.find_last_of("/\\");
+  if( lastSlash != std::string::npos ){
+    std::string outDir = out.substr(0, lastSlash);
+    if( stat(outDir.c_str(), &buffer) != 0 ){
+      std::cerr << "ERROR: Output directory '" << outDir << "' does not exist!" << std::endl;
+      exit(1);
+    }
+  }
+
   fileOutName = out;
-  //std::cout << "Starting reading header..." << std::endl;
+  std::cout << "Starting conversion of '" << in << "' (size: " << (buffer.st_size / 1024.0 / 1024.0) << " MB)" << std::endl;
   
+  // Start timing
+  stats.startTime = std::chrono::steady_clock::now();
+
   std::ifstream input( in.c_str( ), std::ios::binary );
+  if( !input.is_open() ){
+    std::cerr << "ERROR: Could not open input file '" << in << "' for reading!" << std::endl;
+    exit(1);
+  }
 
   uint64_t pos = ReadHeader( input );
-  //std::cout << "Header read." << std::endl;
   ReadData( input, pos );
 
-  //std::cout << "Finished reading the input filer." << std::endl;
+  // End timing
+  stats.endTime = std::chrono::steady_clock::now();
   
   input.close( );
   
@@ -641,7 +696,7 @@ void RUReader::Read( std::string in, std::string out ){
 
 void RUReader::Write( ){
 
-  //std::cout << "Saving data to ROOT file..." << std::endl;
+  std::cout << "Saving data to ROOT file..." << std::endl;
 
   fileOut->cd( );
   TVectorD v(1);
@@ -653,6 +708,83 @@ void RUReader::Write( ){
 
   fileOut->Close( );
 
-  //std::cout << "Saved data to ROOT file." << std::endl;
+  std::cout << "Conversion completed successfully!" << std::endl;
+  PrintStatistics( );
+
+}
+
+void RUReader::PrintStatistics( ){
+
+  std::cout << "\n" << std::string(60, '=') << std::endl;
+  std::cout << "                   CONVERSION STATISTICS" << std::endl;  
+  std::cout << std::string(60, '=') << std::endl;
+
+  // Calculate processing time
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stats.endTime - stats.startTime);
+  double seconds = duration.count() / 1000.0;
+
+  std::cout << std::fixed << std::setprecision(2);
+  std::cout << "Processing time:      " << seconds << " seconds" << std::endl;
+  
+  std::cout << "\nData Processing:" << std::endl;
+  std::cout << "  Total buffers:      " << stats.totalBuffers << std::endl;
+  std::cout << "  Total events:       " << stats.totalEvents << std::endl;
+  std::cout << "  Corrupted buffers:  " << stats.corruptedBuffers << std::endl;
+  std::cout << "  Failed boards:      " << stats.failedBoards << std::endl;
+
+  if( stats.totalBuffers > 0 ){
+    std::cout << "  Avg events/buffer:  " << std::setprecision(1) << (double)stats.totalEvents / stats.totalBuffers << std::endl;
+  }
+
+  if( seconds > 0 ){
+    std::cout << "  Processing rate:    " << std::setprecision(0) << stats.totalEvents / seconds << " events/sec" << std::endl;
+  }
+
+  std::cout << "\nEvents per Channel:" << std::endl;
+  for( const auto& boardPair : stats.eventsPerChannel ){
+    int board = boardPair.first;
+    const auto& channels = boardPair.second;
+    
+    std::cout << "  Board " << board << ":" << std::endl;
+    for( const auto& chanPair : channels ){
+      int channel = chanPair.first;
+      uint64_t count = chanPair.second;
+      uint64_t lastTS = 0;
+      
+      auto tsIt = stats.lastTimestamp.find(board);
+      if( tsIt != stats.lastTimestamp.end() ){
+        auto chanTSIt = tsIt->second.find(channel);
+        if( chanTSIt != tsIt->second.end() ){
+          lastTS = chanTSIt->second;
+        }
+      }
+      
+      // Convert timestamp from 10ns units to h:m:s
+      double totalSeconds = (lastTS * 10e-9);
+      int hours = (int)(totalSeconds / 3600);
+      int minutes = (int)((totalSeconds - hours * 3600) / 60);
+      double seconds = totalSeconds - hours * 3600 - minutes * 60;
+      
+      std::cout << "    Ch " << std::setw(2) << channel << ": " 
+                << std::setw(8) << count << " events (last TS: " << lastTS 
+                << " = " << hours << "h " << minutes << "m " << std::setprecision(3) << seconds << "s)" << std::endl;
+    }
+  }
+
+  double corruptedRate = stats.totalBuffers > 0 ? (100.0 * stats.corruptedBuffers / stats.totalBuffers) : 0.0;
+  
+  std::cout << "\nData Quality:" << std::endl;
+  std::cout << std::setprecision(2);
+  std::cout << "  Corruption rate:    " << corruptedRate << "%" << std::endl;
+  
+  if( stats.failedBoards > 0 ){
+    std::cout << "  WARNING: " << stats.failedBoards << " board failure(s) detected!" << std::endl;
+  }
+  
+  if( corruptedRate > 1.0 ){
+    std::cout << "  WARNING: High corruption rate detected!" << std::endl;
+  }
+
+  std::cout << std::string(60, '=') << std::endl;
 
 }
