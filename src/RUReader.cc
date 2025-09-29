@@ -48,34 +48,41 @@ RUReader::~RUReader(){
 void RUReader::InitializeROOT( ){
 
   // Creating ROOT file
-  fileOut = new TFile( fileOutName.c_str( ), "RECREATE" ); 
+  fileOut = new TFile( fileOutName.c_str( ), "RECREATE" );
 
-  if( dgtzDppType[0] == CAEN_DGTZ_DPPFirmware_PHA ){
-      fTree = new TTree("DataR","DataR");
-      fTree->Branch( "PU"       ,        &fPu,        "PU/O" );
-      fTree->Branch( "SATU"     ,      &fSatu,      "SATU/O" );
-      fTree->Branch( "LOST"     ,      &fLost,      "LOST/O" );
-      fTree->Branch( "Board"    ,     &fBoard,     "Board/s" );
-      fTree->Branch( "Channel"  ,   &fChannel,   "Channel/s" );
-      fTree->Branch( "TimeStamp", &fTimeStamp, "TimeStamp/l" );
-      fTree->Branch( "Energy"   ,  &fEnergies,    "Energy/s" );
-      fTree->Branch( "Flags"    ,    &fExtras,     "Flags/i" );
-      fTree->Branch( "Extras2"  ,   &fExtras2,   "Extras2/i" );
-      fTree->SetMaxVirtualSize(1000000000LL);
-    }
-    else if( dgtzDppType[0] == CAEN_DGTZ_DPPFirmware_PSD ){
-      fTree = new TTree("DataR","DataR");
-      fTree->Branch( "PU"       ,        &fPu,        "PU/O" );
-      fTree->Branch( "SATU"     ,      &fSatu,      "SATU/O" );
-      fTree->Branch( "LOST"     ,      &fLost,      "LOST/O" );
-      fTree->Branch( "Board"    ,     &fBoard,     "Board/s" );
-      fTree->Branch( "Channel"  ,   &fChannel,   "Channel/s" );
-      fTree->Branch( "TimeStamp", &fTimeStamp, "TimeStamp/l" );
-      fTree->Branch( "QShort"   ,    &fQShort,    "QShort/s" );
-      fTree->Branch( "QLong"    ,     &fQLong,     "QLong/s" );
-      fTree->Branch( "Flags"    ,    &fExtras,     "Flags/i" );
-      fTree->SetMaxVirtualSize(1000000000LL);
-    }
+  // Check which firmware types are present
+  bool hasPHA = false;
+  bool hasPSD = false;
+  for( const auto& board : dgtzDppType ){
+    if( board.second == CAEN_DGTZ_DPPFirmware_PHA ) hasPHA = true;
+    if( board.second == CAEN_DGTZ_DPPFirmware_PSD ) hasPSD = true;
+  }
+
+  // Create unified tree
+  fTree = new TTree("Data","Unified DAQ Data");
+
+  // Common branches for both PHA and PSD
+  fTree->Branch( "PU"       ,        &fPu,        "PU/O" );
+  fTree->Branch( "SATU"     ,      &fSatu,      "SATU/O" );
+  fTree->Branch( "LOST"     ,      &fLost,      "LOST/O" );
+  fTree->Branch( "Board"    ,     &fBoard,     "Board/s" );
+  fTree->Branch( "Channel"  ,   &fChannel,   "Channel/s" );
+  fTree->Branch( "TimeStamp", &fTimeStamp, "TimeStamp/l" );
+  fTree->Branch( "Flags"    ,    &fExtras,     "Flags/i" );
+
+  // PHA-specific branches (only if PHA firmware is present)
+  if( hasPHA ){
+    fTree->Branch( "Energy"   ,  &fEnergies,    "Energy/s" );
+    fTree->Branch( "Extras2"  ,   &fExtras2,   "Extras2/i" );
+  }
+
+  // PSD-specific branches (only if PSD firmware is present)
+  if( hasPSD ){
+    fTree->Branch( "EnergyShort"   ,    &fQShort,    "EnergyShort/s" );
+    fTree->Branch( "EnergyLong"    ,     &fQLong,     "EnergyLong/s" );
+  }
+
+  fTree->SetMaxVirtualSize(1000000000LL);
 
 }
 
@@ -85,7 +92,7 @@ void RUReader::InitializeWave( int bIdx, uint32_t length, bool fDual ){
 
   if( !fWaveInitialized ){
     fWave = true;
-    
+
     if( fDual ){
       fTree->Branch( "fWave1",          &fWave1 );
       fTree->Branch( "fWave2",          &fWave2 );
@@ -99,7 +106,7 @@ void RUReader::InitializeWave( int bIdx, uint32_t length, bool fDual ){
       fTree->Branch( "fDigital1", &fDigital11 );
       fTree->Branch( "fDigital2", &fDigital21 );
     }
-    
+
     fWaveInitialized = true;
   }
   
@@ -239,6 +246,8 @@ void RUReader::UnpackPHA( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
 	switch(dataForm.GetConfig( "Extras" )) {
 	case 0: // Extended Time Stamp [31:16] ; baseline*4 [15:0]
 	  tstamp = ((uint64_t)(extras2&0xFFFF0000))<<15 | (uint64_t)tstamp;
+    // Dump hex of the extras2&0xFFFF0000 shifted by 16
+    //std::cout << std::hex << ((extras2&0xFFFF0000)>>16) << std::endl;
 	  break;
 	case 1: // Extended Time stamp [31:16] ; flags [15:0]
 	  tstamp = ((uint64_t)(extras2&0xFFFF0000))<<15 | (uint64_t)tstamp;
@@ -273,6 +282,11 @@ void RUReader::UnpackPHA( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
       fChannel   = chanNum;
       fExtras    = extras;
       fExtras2   = extras2;
+
+      // Set PSD fields to zero for PHA events
+      fQShort    = 0;
+      fQLong     = 0;
+
       fTree->Fill( );
 
       // Update statistics
@@ -405,13 +419,31 @@ void RUReader::UnpackPSD( uint32_t* inpBuffer, uint32_t& board, std::bitset<8>& 
         UnpackWave( inpBuffer, board, dataForm, startingPos+2+dataForm.EvtSize()*evt);
       }
       
+      fBoard     = board;
       fPu        = pur;
       fQShort    = qshort;
       fQLong     = qlong;
       fTimeStamp = tstamp;
       fChannel   = chanNum;
       fExtras    = extras;
+
+      // Set PHA fields to zero for PSD events
+      fEnergies  = 0;
+      fExtras2   = 0;
+
       fTree->Fill( );
+
+      if( fVerbose ){
+
+        std::cout << "Board: " << board << std::endl;
+        std::cout << "Channel: " << chanNum << std::endl;
+        std::cout << "QShort: " << qshort << std::endl;
+        std::cout << "QLong: " << qlong << std::endl;
+        std::cout << "Time Stamp: " << tstamp << std::endl;
+        std::cout << "Flags: " << flags << std::endl;
+        std::cout << "Extras: " << extras << std::endl;
+
+      }
 
       // Update statistics
       stats.totalEvents++;
@@ -493,12 +525,12 @@ uint64_t RUReader::ReadHeader( std::ifstream& input ){
   char*     header;
   uint32_t  hSize;
 
-  input.get( (char*)&hSize, sizeof(uint32_t) );
+  input.read( (char*)&hSize, sizeof(uint32_t) );
 
   header = new char[(hSize)*sizeof(uint32_t)];
 
   input.seekg(0, std::ios::beg);
-  input.get( header, (hSize)*sizeof(uint32_t) );
+  input.read( header, (hSize)*sizeof(uint32_t) );
 
   uint32_t* inpBuffer = (uint32_t*)header;
 
@@ -518,30 +550,41 @@ uint64_t RUReader::ReadHeader( std::ifstream& input ){
     // Creating the DataFrame for each board
     switch( dppVersion ){
       case 0: // PHA
-        dgtzDppType[i] = CAEN_DGTZ_DPPFirmware_PHA;
+        dgtzDppType[boardRegId] = CAEN_DGTZ_DPPFirmware_PHA;
         break;
       case 1: // PSD
-        dgtzDppType[i] = CAEN_DGTZ_DPPFirmware_PSD;
+        dgtzDppType[boardRegId] = CAEN_DGTZ_DPPFirmware_PSD;
         break;
     }
-    dgtzChans[i] = channels;
-    frames[i] = DataFrame( dgtzDppType[i], dgtzName[i] );
-    frames[i].Build( );
+    dgtzChans[boardRegId] = channels;
+    frames[boardRegId] = DataFrame( dgtzDppType[boardRegId], dgtzName[boardRegId] );
+    frames[boardRegId].Build( );
     for( int ch = 0; ch < channels; ++ ch )
-      RO[i][ch] = 0;
+      RO[boardRegId][ch] = 0;
     fWave = false;
     fWaveInitialized = false;
 
   }
 
-  if( fVerbose ){
-    
-    std::cout << "Number of boards: " << nboards << std::endl;
-    for( int i = 0; i < nboards; ++i ){
-      std::cout << "Board " << i << " has " << dgtzChans[i] << " channels." << std::endl;
-    }
+  std::cout << std::endl;
+  std::cout << "-------------------- XDAQ Header --------------------" << std::endl;
+  std::cout << "Number of boards: " << nboards << std::endl;
+  for( int i = 0; i < nboards; ++i ){
+    std::cout << "Board " << dgtzName[i] << " has " << dgtzChans[i] << " channels and firmware type ";;
+    if( dgtzDppType[i] == CAEN_DGTZ_DPPFirmware_PHA )
+      std::cout << "PHA." << std::endl;
+    else if( dgtzDppType[i] == CAEN_DGTZ_DPPFirmware_PSD )
+      std::cout << "PSD." << std::endl;
+    std::cout << "  - nsPerSample: " << nsPerSample << std::endl;
+    std::cout << "  - nsPerTimetag: " << nsPerTimetag << std::endl;
+    std::cout << "  - DPP version: " << dppVersion << std::endl;
+    std::cout << "  - Board Reg ID: " << boardRegId << std::endl;
 
   }
+
+  std::cout << "Acquisition start time (epoch): " << startTime << std::endl;
+  std::cout << "---------------------------------------------------" << std::endl;
+  std::cout << std::endl;
 
   InitializeROOT( );
 
@@ -682,6 +725,13 @@ void RUReader::Read( std::string in, std::string out ){
   if( !input.is_open() ){
     std::cerr << "ERROR: Could not open input file '" << in << "' for reading!" << std::endl;
     exit(1);
+  }
+
+  // Print file info for verbose mode
+  if( fVerbose ){
+    std::cout << "Input file: " << in << std::endl;
+    std::cout << "Output file: " << out << std::endl;
+    std::cout << "File size: " << (buffer.st_size / 1024.0 / 1024.0) << " MB" << std::endl;
   }
 
   uint64_t pos = ReadHeader( input );
