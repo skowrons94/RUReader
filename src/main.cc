@@ -1,95 +1,218 @@
+#include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
-#include <string>
 #include <map>
+#include <string>
+#include <vector>
 
 #include <CAENDigitizerType.h>
 
 #include "RUReader.h"
 
-static void show_usage(std::string name)
+namespace fs = std::filesystem;
+
+static void ShowUsage( const std::string& name )
 {
-  std::cerr << "Usage: "
-            << "\t-h,--help\tShow this help message.\n"
-            << "\t-d,--dgtz\tSpecify board name and board id.\n"
-	    << "\t-i,--in\t\tSpecify the input file.\n"
-	    << "\t-o,--out\tSpecify the output file.\n"
-	    << "\t--ignore-fail\tIgnore board failure flags."
-            << std::endl;
+  std::cerr
+    << "Usage: " << name << " -i <input> -o <output.root> [options]\n\n"
+    << "  -i, --in <path>          Input .caendat file or a directory containing them.\n"
+    << "  -o, --out <path>         Output ROOT file.\n"
+    << "  -d, --dgtz <name> <id>   Override the board type read from the file header.\n"
+    << "                           May be repeated. Not required: the header already\n"
+    << "                           describes every board of the acquisition.\n"
+    << "  -t, --ts-unit <unit>     Unit of the Timestamp branch: ps (default), ns, us,\n"
+    << "                           ms, s or raw (the bare counter of the board).\n"
+    << "  -c, --compression <0-9>  ROOT compression level (default: the ROOT setting).\n"
+    << "  -b, --buffer <MB>        Size of the read buffer, in MB (default: 64).\n"
+    << "  -v, --verbose            Print more information, twice for every event.\n"
+    << "      --ignore-fail        Ignore the board failure flag without asking.\n"
+    << "      --force-dual-trace   Always create two trace branches in the TTree.\n"
+    << "      --ignore-psd-boards  Do not write the events of PSD firmware boards.\n"
+    << "  -h, --help               Show this help message.\n"
+    << std::endl;
 }
 
-int main( int argc, char* argv[] ){
+// Collects the .caendat files to convert, either the single file given by the
+// user or every file of a directory, sorted by name so that the temporal order
+// of a run split over several files is preserved.
+static std::vector<std::string> FindCaendatFiles( const std::string& path )
+{
+  std::vector<std::string> files;
 
-  int bId;
-  std::string fileIn    = "";
-  std::string fileOut   = "";
-  std::string dgtzName  = "";
+  std::error_code ec;
+
+  if( fs::is_regular_file( path, ec ) ){
+    files.push_back( path );
+    return files;
+  }
+
+  if( !fs::is_directory( path, ec ) ){
+    std::cerr << "ERROR: '" << path << "' is neither a file nor a directory!" << std::endl;
+    return files;
+  }
+
+  std::cout << "Scanning directory for .caendat files..." << std::endl;
+
+  for( const auto& entry : fs::directory_iterator( path, ec ) ){
+    if( !entry.is_regular_file( ) ) continue;
+    if( entry.path( ).extension( ) == ".caendat" ) files.push_back( entry.path( ).string( ) );
+  }
+
+  std::sort( files.begin( ), files.end( ) );
+
+  if( files.empty( ) ){
+    std::cerr << "ERROR: No .caendat files found in directory '" << path << "'!" << std::endl;
+  }
+  else{
+    std::cout << "Found " << files.size( ) << " .caendat file(s) to process:" << std::endl;
+    for( size_t i = 0; i < files.size( ); ++i )
+      std::cout << "  " << ( i + 1 ) << ". " << fs::path( files[i] ).filename( ).string( )
+                << std::endl;
+  }
+
+  return files;
+}
+
+// True when the argument at index i exists and is not another option.
+static bool HasValue( int argc, char* argv[], int i )
+{
+  return i < argc && argv[i][0] != '-';
+}
+
+int main( int argc, char* argv[] )
+{
+  std::string fileIn;
+  std::string fileOut;
   std::map<int,std::string> dgtz;
-  bool ignore_fail      = false;
 
-  std::string temp;
+  bool ignoreFail       = false;
+  bool forceDual        = false;
+  bool ignorePsdBoards  = false;
+  int  verbose          = 0;
+  int  compression      = -1;
+  uint64_t bufferBytes  = 64ull * 1024 * 1024;
+  TimeUnit timeUnit     = TimeUnit::Picosecond;
 
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if ((arg == "-h") || (arg == "--help")) {
-      show_usage(argv[0]);
+  for( int i = 1; i < argc; ++i ){
+
+    const std::string arg = argv[i];
+
+    if( arg == "-h" || arg == "--help" ){
+      ShowUsage( argv[0] );
       return 0;
-    } else if ((arg == "-d") || (arg == "--dgtz")) {
-      if (i + 2 < argc && std::string(argv[i+1])[0] != std::string("-")[0]
-	               && std::string(argv[i+2])[0] != std::string("-")[0]) {
-	dgtzName  = argv[++i];
-	bId       = atoi( argv[++i] );
-	dgtz[bId] = dgtzName;
-      } else {
-	std::cerr << "-d --dgtz options requires two arguments." << std::endl;
-	return 1;
-      }  
-    } else if ((arg == "-i") || (arg == "--in")) {
-      if (i + 1 < argc && std::string(argv[i+1])[0] != std::string("-")[0]) {
-	fileIn = argv[++i];
-      } else {
-	std::cerr << "-i --in options requires one argument." << std::endl;
-	return 1;
-      }
-    } else if ((arg == "-o") || (arg == "--out")) {
-      if (i + 1 < argc && std::string(argv[i+1])[0] != std::string("-")[0]) {
-	fileOut = argv[++i];
-      } else {
-	std::cerr << "-o --out options requires one argument." << std::endl;
-	return 1;
-      }
-    } else if (arg == "--ignore-fail") {
-      ignore_fail = true;
-    } else {
-      std::cerr << "Unknown option: " << arg << std::endl;
-      show_usage(argv[0]);
-      return 1;
     }
-     
-  };
-
-  if( dgtzName != "" ){
-    RUReader reader( dgtz, ignore_fail );
-    if( fileIn != "" ){
-      if( fileOut != "" ){
-	reader.Read( fileIn, fileOut );
-	reader.Write( );
+    else if( arg == "-d" || arg == "--dgtz" ){
+      if( !HasValue( argc, argv, i + 1 ) || !HasValue( argc, argv, i + 2 ) ){
+        std::cerr << "-d --dgtz requires two arguments: <board name> <board id>." << std::endl;
+        return 1;
       }
-      else{
-	std::cerr << "No output file specified." << std::endl;
-	return 1;
+      const std::string name = argv[++i];
+      const int boardId = std::atoi( argv[++i] );
+      if( boardId < 0 || boardId >= RUReader::kMaxBoards ){
+        std::cerr << "ERROR: board id " << boardId << " is outside the range 0-"
+                  << RUReader::kMaxBoards - 1 << "." << std::endl;
+        return 1;
       }
+      dgtz[boardId] = name;
+    }
+    else if( arg == "-i" || arg == "--in" ){
+      if( !HasValue( argc, argv, i + 1 ) ){
+        std::cerr << "-i --in requires one argument." << std::endl;
+        return 1;
+      }
+      fileIn = argv[++i];
+    }
+    else if( arg == "-o" || arg == "--out" ){
+      if( !HasValue( argc, argv, i + 1 ) ){
+        std::cerr << "-o --out requires one argument." << std::endl;
+        return 1;
+      }
+      fileOut = argv[++i];
+    }
+    else if( arg == "-t" || arg == "--ts-unit" ){
+      if( !HasValue( argc, argv, i + 1 ) ){
+        std::cerr << "-t --ts-unit requires one argument." << std::endl;
+        return 1;
+      }
+      const std::string unit = argv[++i];
+      if( !ParseTimeUnit( unit, timeUnit ) ){
+        std::cerr << "ERROR: unknown time stamp unit '" << unit
+                  << "'. Use ps, ns, us, ms, s or raw." << std::endl;
+        return 1;
+      }
+    }
+    else if( arg == "-c" || arg == "--compression" ){
+      if( !HasValue( argc, argv, i + 1 ) ){
+        std::cerr << "-c --compression requires one argument." << std::endl;
+        return 1;
+      }
+      compression = std::atoi( argv[++i] );
+      if( compression < 0 || compression > 9 ){
+        std::cerr << "ERROR: the compression level must be between 0 and 9." << std::endl;
+        return 1;
+      }
+    }
+    else if( arg == "-b" || arg == "--buffer" ){
+      if( !HasValue( argc, argv, i + 1 ) ){
+        std::cerr << "-b --buffer requires one argument." << std::endl;
+        return 1;
+      }
+      const int megabytes = std::atoi( argv[++i] );
+      if( megabytes < 1 || megabytes > 1024 ){
+        std::cerr << "ERROR: the buffer size must be between 1 and 1024 MB." << std::endl;
+        return 1;
+      }
+      bufferBytes = static_cast<uint64_t>( megabytes ) * 1024 * 1024;
+    }
+    else if( arg == "-v" || arg == "--verbose" ){
+      ++verbose;
+    }
+    else if( arg == "--ignore-fail" ){
+      ignoreFail = true;
+    }
+    else if( arg == "--force-dual-trace" ){
+      forceDual = true;
+    }
+    else if( arg == "--ignore-psd-boards" ){
+      ignorePsdBoards = true;
     }
     else{
-      std::cerr << "No input file specified." << std::endl;
+      std::cerr << "Unknown option: " << arg << std::endl;
+      ShowUsage( argv[0] );
       return 1;
     }
   }
-  else {
-    std::cerr << "No digitizer specified." << std::endl;
+
+  if( fileIn.empty( ) ){
+    std::cerr << "No input file specified." << std::endl;
     return 1;
   }
 
-  return 0;
-  
-}
+  if( fileOut.empty( ) ){
+    std::cerr << "No output file specified." << std::endl;
+    return 1;
+  }
 
+  const std::vector<std::string> inputFiles = FindCaendatFiles( fileIn );
+  if( inputFiles.empty( ) ){
+    std::cerr << "ERROR: No input files found." << std::endl;
+    return 1;
+  }
+
+  RUReader reader( dgtz, ignoreFail, forceDual, ignorePsdBoards );
+  reader.SetTimeUnit( timeUnit );
+  reader.SetVerbose( verbose );
+  reader.SetCompression( compression );
+  reader.SetBufferSize( bufferBytes );
+
+  if( !reader.ReadMultiple( inputFiles, fileOut ) ){
+    std::cerr << "\nConversion failed." << std::endl;
+    reader.Write( );          // keep whatever could be decoded
+    return 1;
+  }
+
+  reader.Write( );
+
+  return 0;
+}

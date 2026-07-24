@@ -1,113 +1,109 @@
 #include <string>
+
 #include "DataFrameBuilderPHA.h"
 
-DataFrameBuilderPHA::DataFrameBuilderPHA( std::string dgtzName ){
-    
-    this->fDgtzName = dgtzName;
-
-    this->ProduceNumSamples( );
-    this->ProduceFlags( );
-    this->ProduceConfigs( );
-    this->ProduceFormats( );
-    
+// Board families sharing the same DPP-PHA data format.
+static bool IsX730Family( const std::string& name )
+{
+  return name.find( "730" ) != std::string::npos ||
+         name.find( "725" ) != std::string::npos;
 }
 
-DataFrameBuilderPHA::~DataFrameBuilderPHA( ){
-    
+static bool IsX724Family( const std::string& name )
+{
+  return name.find( "724" ) != std::string::npos ||
+         name.find( "781" ) != std::string::npos ||
+         name.find( "782" ) != std::string::npos;
 }
 
-void DataFrameBuilderPHA::ProduceNumSamples( ){
-    
-    fNumSamples = 0;
-    if( fDgtzName.find("730") != std::string::npos ||
-        fDgtzName.find("725") != std::string::npos ){
-        this->fNumSamples = 8;
-    }
-    else if( fDgtzName.find("724") != std::string::npos ||
-             fDgtzName.find("781") != std::string::npos || 
-             fDgtzName.find("782") != std::string::npos ){
-        this->fNumSamples = 2;
-    }
+DataFrameBuilderPHA::DataFrameBuilderPHA( std::string dgtzName )
+{
+  fDgtzName = dgtzName;
+
+  ProduceNumSamples( );
+  ProduceFlags( );
+  ProduceConfigs( );
+  ProduceFormats( );
 }
 
-void DataFrameBuilderPHA::ProduceFlags( ){
-    
-    if( fDgtzName.find("730") != std::string::npos ||
-        fDgtzName.find("725") != std::string::npos ){
-      
-        this->fFlags["DT"]     = 31; 
-        this->fFlags["Energy"] = 30;
-        this->fFlags["TS"]     = 29;
-        this->fFlags["Extras"] = 28;
-        this->fFlags["Trace"]  = 27;
-
-    }
-    else if( fDgtzName.find("724") != std::string::npos ||
-             fDgtzName.find("781") != std::string::npos || 
-             fDgtzName.find("782") != std::string::npos ){
-      
-        this->fFlags["DT"]     = 31; 
-        this->fFlags["Energy"] = 29;
-        this->fFlags["TS"]     = 28;
-        this->fFlags["Trace"]  = 30;
-
-    }
-    
+DataFrameBuilderPHA::~DataFrameBuilderPHA( )
+{
 }
 
-void DataFrameBuilderPHA::ProduceConfigs( ){
-    
-    if( fDgtzName.find("730") != std::string::npos ||
-        fDgtzName.find("725") != std::string::npos ){
-      
-        this->fConfigs["Extras"]      = std::make_pair(24,26); 
-        this->fConfigs["AnaProbe1"]   = std::make_pair(22,23);
-        this->fConfigs["AnaProbe2"]   = std::make_pair(20,21);
-        this->fConfigs["DigProbe"]    = std::make_pair(16,19);
-        this->fConfigs["NumSamples"]  = std::make_pair(0,15);
+void DataFrameBuilderPHA::ProduceNumSamples( )
+{
+  fNumSamples = 0;
 
-    }
-    else if( fDgtzName.find("724") != std::string::npos ||
-             fDgtzName.find("781") != std::string::npos || 
-             fDgtzName.find("782") != std::string::npos ){
-      
-        this->fConfigs["AnaProbe"]    = std::make_pair(22,23);
-        this->fConfigs["DigProbe1"]   = std::make_pair(20,21);
-        this->fConfigs["DigProbe2"]   = std::make_pair(16,19);
-        this->fConfigs["NumSamples"]  = std::make_pair(0,15);
-
-    }
-    
+  if( IsX730Family( fDgtzName ) )      fNumSamples = 8;
+  else if( IsX724Family( fDgtzName ) ) fNumSamples = 2;
 }
 
-void DataFrameBuilderPHA::ProduceFormats( ){
+void DataFrameBuilderPHA::ProduceFlags( )
+{
+  if( IsX730Family( fDgtzName ) ){
 
-    if( fDgtzName.find("730") != std::string::npos ||
-        fDgtzName.find("725") != std::string::npos ){
-      
-        this->fFormats["Size"]    = std::make_pair(0,30);
-        this->fFormats["Energy"]  = std::make_pair(0,14); 
-        this->fFormats["Extras"]  = std::make_pair(16,20);
-        this->fFormats["TS"]      = std::make_pair(0,30);
-        this->fFormats["CH"]      = std::make_pair(31,31);
-        this->fFormats["Sample"]  = std::make_pair(0,13);
-        this->fFormats["DP"]      = std::make_pair(14,14);
-        this->fFormats["TR"]      = std::make_pair(15,15);
+    fFlags["DT"]     = 31;
+    fFlags["Energy"] = 30;
+    fFlags["TS"]     = 29;
+    fFlags["Extras"] = 28;
+    fFlags["Trace"]  = 27;
 
-    }
-    else if( fDgtzName.find("724") != std::string::npos ||
-             fDgtzName.find("781") != std::string::npos || 
-             fDgtzName.find("782") != std::string::npos ){
-      
-        this->fFormats["Size"]     = std::make_pair(0,20);
-        this->fFormats["Energy"]   = std::make_pair(0,14);
-        this->fFormats["Extras"]   = std::make_pair(16,23);
-        this->fFormats["TS"]       = std::make_pair(0,29);
-        this->fFormats["RO"]       = std::make_pair(31,31);
-        this->fFormats["Sample"]   = std::make_pair(0,13);
-        this->fFormats["DP"]       = std::make_pair(14,14);
-        this->fFormats["TR"]       = std::make_pair(15,15);
+  }
+  else if( IsX724Family( fDgtzName ) ){
 
-    }
+    fFlags["DT"]     = 31;
+    fFlags["Trace"]  = 30;
+    fFlags["Energy"] = 29;
+    fFlags["TS"]     = 28;
 
+  }
+}
+
+void DataFrameBuilderPHA::ProduceConfigs( )
+{
+  if( IsX730Family( fDgtzName ) ){
+
+    fConfigs["Extras"]     = std::make_pair( 24, 26 );
+    fConfigs["AnaProbe1"]  = std::make_pair( 22, 23 );
+    fConfigs["AnaProbe2"]  = std::make_pair( 20, 21 );
+    fConfigs["DigProbe"]   = std::make_pair( 16, 19 );
+    fConfigs["NumSamples"] = std::make_pair(  0, 15 );
+
+  }
+  else if( IsX724Family( fDgtzName ) ){
+
+    fConfigs["AnaProbe"]   = std::make_pair( 22, 23 );
+    fConfigs["DigProbe1"]  = std::make_pair( 20, 21 );
+    fConfigs["DigProbe2"]  = std::make_pair( 16, 19 );
+    fConfigs["NumSamples"] = std::make_pair(  0, 15 );
+
+  }
+}
+
+void DataFrameBuilderPHA::ProduceFormats( )
+{
+  if( IsX730Family( fDgtzName ) ){
+
+    fFormats["Size"]   = std::make_pair(  0, 30 );
+    fFormats["Energy"] = std::make_pair(  0, 14 );
+    fFormats["Extras"] = std::make_pair( 16, 20 );
+    fFormats["TS"]     = std::make_pair(  0, 30 );
+    fFormats["CH"]     = std::make_pair( 31, 31 );
+    fFormats["Sample"] = std::make_pair(  0, 13 );
+    fFormats["DP1"]    = std::make_pair( 14, 14 );  // digital probe
+    fFormats["DP2"]    = std::make_pair( 15, 15 );  // trigger
+
+  }
+  else if( IsX724Family( fDgtzName ) ){
+
+    fFormats["Size"]   = std::make_pair(  0, 20 );
+    fFormats["Energy"] = std::make_pair(  0, 14 );
+    fFormats["Extras"] = std::make_pair( 16, 23 );
+    fFormats["TS"]     = std::make_pair(  0, 29 );
+    fFormats["RO"]     = std::make_pair( 31, 31 );
+    fFormats["Sample"] = std::make_pair(  0, 13 );
+    fFormats["DP1"]    = std::make_pair( 14, 14 );  // digital probe
+    fFormats["DP2"]    = std::make_pair( 15, 15 );  // trigger
+
+  }
 }

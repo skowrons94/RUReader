@@ -1,89 +1,127 @@
-#include "Utils.h"
 #include "DataFrame.h"
+#include "Utils.h"
 
-DataFrame::DataFrame( CAEN_DGTZ_DPPFirmware_t dppType, std::string dgtzName ){
+DataFrame::DataFrame( CAEN_DGTZ_DPPFirmware_t dppType, std::string dgtzName )
+{
+  switch( dppType ){
+    case CAEN_DGTZ_DPPFirmware_PHA:
+      fBuilder = std::make_shared<DataFrameBuilderPHA>( dgtzName );
+      break;
+    case CAEN_DGTZ_DPPFirmware_PSD:
+      fBuilder = std::make_shared<DataFrameBuilderPSD>( dgtzName );
+      break;
+    default:
+      break;
+  }
 
-    switch( dppType ){
-        case( CAEN_DGTZ_DPPFirmware_PHA ):
-            this->SetBuilder( new DataFrameBuilderPHA( dgtzName ) );
-            break;
-        case( CAEN_DGTZ_DPPFirmware_PSD ):
-            this->SetBuilder( new DataFrameBuilderPSD( dgtzName ) );
-            break;
-        default:
-            break;
-    }
-
-    fDgtzName = dgtzName;
-    
+  fDgtzName = dgtzName;
 }
 
-DataFrame::~DataFrame( ){
+void DataFrame::Build( )
+{
+  if( !fBuilder ) return;
 
+  fBuilder->ProduceFlags( );
+  fBuilder->ProduceConfigs( );
+  fBuilder->ProduceFormats( );
+
+  fFlags      = fBuilder->GetFlags( );
+  fConfigs    = fBuilder->GetConfigs( );
+  fFormats    = fBuilder->GetFormat( );
+  fNumSamples = fBuilder->GetNumSamples( );
+
+  fSizeFormat = Format( "Size", BitRange( 0, 31 ) );
 }
 
-void DataFrame::Produce( ){
-
-    this->fBuilder->ProduceFlags( );
-    this->fBuilder->ProduceConfigs( );
-    this->fBuilder->ProduceFormats( );
-
+bool DataFrame::Enabled( const std::string& key ) const
+{
+  auto it = fFlags.find( key );
+  if( it == fFlags.end( ) ) return false;
+  return ( fDataFormat >> it->second ) & 0x1u;
 }
 
-void DataFrame::Build( ){
-
-    this->Produce( );
-
-    fFlags   = this->fBuilder->GetFlags( );
-    fConfigs = this->fBuilder->GetConfigs( );
-    fFormats = this->fBuilder->GetFormat( );
-    fNumSamples = this->fBuilder->GetNumSamples( );
-
+bool DataFrame::HasConfig( const std::string& key ) const
+{
+  return fConfigs.find( key ) != fConfigs.end( );
 }
 
-bool DataFrame::CheckEnabled( std::string key ){
+uint16_t DataFrame::Config( const std::string& key ) const
+{
+  auto it = fConfigs.find( key );
+  if( it == fConfigs.end( ) ) return 0;
 
-    if( CheckKey( fFlags, key ) )
-        return this->fDataFormat.test(fFlags[key]);
-    else
-        return false;
+  const uint32_t value = ExtractBits( fDataFormat, it->second );
 
+  // The number of samples is stored in units of fNumSamples samples.
+  if( key == "NumSamples" ) return static_cast<uint16_t>( value * fNumSamples );
+
+  return static_cast<uint16_t>( value );
 }
 
-uint16_t DataFrame::GetConfig( std::string key ){
-    std::size_t min = (std::size_t)fConfigs[key].first;
-    std::size_t max = (std::size_t)fConfigs[key].second;
-    if( key == "NumSamples" )
-        return static_cast<uint16_t>(project_range(min,max,fDataFormat).to_ulong())*fNumSamples;
-    else
-        return static_cast<uint16_t>(project_range(min,max,fDataFormat).to_ulong());
+bool DataFrame::HasFormat( const std::string& key ) const
+{
+  return fFormats.find( key ) != fFormats.end( );
 }
 
-std::pair<int,int>& DataFrame::GetFormat( std::string key ){
-    return fFormats[key];
+BitRange DataFrame::Format( const std::string& key, BitRange fallback ) const
+{
+  auto it = fFormats.find( key );
+  if( it == fFormats.end( ) ) return fallback;
+  return it->second;
 }
 
-bool DataFrame::CheckFormat( std::string key ){
-    return CheckKey( fFormats, key );
+bool DataFrame::SetDataFormat( uint32_t form )
+{
+  if( fFormatSet && form == fDataFormat ) return false;
+
+  fDataFormat = form;
+  fFormatSet  = true;
+  ResolveLayout( );
+
+  return true;
 }
 
-bool DataFrame::CheckConfig( std::string key ){
-    return CheckKey( fConfigs, key );
-}
+void DataFrame::ResolveLayout( )
+{
+  DataLayout l;
 
-uint16_t& DataFrame::EvtSize( ){
+  l.dualTrace     = Enabled( "DT" );
+  l.hasTrace      = Enabled( "Trace" );
+  l.hasChannelBit = HasFormat( "CH" );
+  l.numSamples    = Config( "NumSamples" );
 
-    if( evtSize == 0 ){
-        if(CheckEnabled("Energy")) evtSize +=1;
-        if(CheckEnabled("Charge")) evtSize +=1;
-        if(CheckEnabled("TS"))     evtSize +=1;
-        if(CheckEnabled("Extras") &&
-            fDgtzName.find("724") == std::string::npos &&
-            fDgtzName.find("781") == std::string::npos && 
-            fDgtzName.find("782") == std::string::npos) evtSize +=1;
-        if(CheckEnabled("Trace"))  evtSize += GetConfig( "NumSamples" )/2;
-    }
+  // Boards of the x724/x781/x782 family do not ship the extra word even when
+  // the corresponding bit of the format word is set.
+  const bool extrasWordAvailable = fDgtzName.find( "724" ) == std::string::npos &&
+                                   fDgtzName.find( "781" ) == std::string::npos &&
+                                   fDgtzName.find( "782" ) == std::string::npos;
 
-    return evtSize;
+  l.hasExtras    = Enabled( "Extras" ) && extrasWordAvailable;
+  l.extrasConfig = HasConfig( "Extras" );
+  l.extrasMode   = l.extrasConfig ? static_cast<uint8_t>( Config( "Extras" ) ) : 0;
 
+  l.fmtTS     = Format( "TS"    , BitRange(  0, 30 ) );
+  l.fmtExtras = Format( "Extras", BitRange(  0, 31 ) );
+  l.fmtSample = Format( "Sample", BitRange(  0, 13 ) );
+
+  // PHA calls the two digital probes "DP" and "TR", PSD calls them "DP1" and
+  // "DP2". Accept both spellings, otherwise the PHA probes silently decoded
+  // bit 0 of the sample word.
+  l.fmtDP1 = HasFormat( "DP1" ) ? Format( "DP1", BitRange( 14, 14 ) )
+                                : Format( "DP" , BitRange( 14, 14 ) );
+  l.fmtDP2 = HasFormat( "DP2" ) ? Format( "DP2", BitRange( 15, 15 ) )
+                                : Format( "TR" , BitRange( 15, 15 ) );
+
+  l.tsBits = RangeWidth( l.fmtTS );
+
+  // Event size, in 32 bit words.
+  uint16_t size = 0;
+  if( Enabled( "Energy" ) ) size += 1;
+  if( Enabled( "Charge" ) ) size += 1;
+  if( Enabled( "TS"     ) ) size += 1;
+  if( l.hasExtras         ) size += 1;
+  if( l.hasTrace          ) size += l.numSamples / 2;
+  l.evtSize = size;
+
+  fLayout = l;
 }
