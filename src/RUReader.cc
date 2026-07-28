@@ -659,17 +659,16 @@ void RUReader::UnpackPHA( const uint32_t* buffer, uint32_t board, std::bitset<8>
 
         switch( layout.extrasMode ){
           case 0:  // extended time stamp [31:16], baseline*4 [15:0]
-          case 1:  // extended time stamp [31:16], flags [15:0]
             extendedTS   = extras2 >> 16;
             extendedBits = 16;
             break;
-          case 2:  // extended time stamp [31:16], flags [15:10], fine TS [9:0]
+          case 2:  // extended time stamp [31:16], reserved [15:10], fine TS [9:0]
             extendedTS   = extras2 >> 16;
             extendedBits = 16;
             fineTS       = extras2 & 0x3FF;
             fineBits     = 10;
             break;
-          default: // 4, 5 and 7 carry counters, not a time stamp
+          default: // 1, 3, and 7 reserved, 4 and 5 carry counters, not a time stamp. 6 is NOT DEFINED in the CAEN manual, even the latest rev 5
             break;
         }
       }
