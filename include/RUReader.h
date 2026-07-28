@@ -109,6 +109,8 @@ private:
   bool DecodeBoardInfo( uint32_t boardInfo, int index );
   static std::string GuessBoardName( uint32_t nsPerSample, uint32_t nsPerTimetag,
                                      uint32_t channels, CAEN_DGTZ_DPPFirmware_t dpp );
+  // Time stamp LSB of a board family, in ns. 0 when the type is not known.
+  static uint32_t BoardTimeStampLsb( const std::string& name );
   void PrintBoardTable( ) const;
   void ReportLine( const std::string& message );   // prints above the progress bar
   void UpdateProgress( );

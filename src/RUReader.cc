@@ -209,6 +209,24 @@ std::string RUReader::GuessBoardName( uint32_t nsPerSample, uint32_t nsPerTimeta
   return "";
 }
 
+// The LSB of the trigger time tag is a property of the board family: the
+// counter always runs at the sampling clock of the digitizer. The "ns per time
+// tag" field of the XDAQ header is not a usable source for it, a V1725 crate
+// has been seen to declare 4 ns for its DPP-PSD boards and 16 ns for its
+// DPP-PHA board although all four counters ticked at the same 4 ns.
+// Returns 0 for a board type that is not listed here.
+uint32_t RUReader::BoardTimeStampLsb( const std::string& name )
+{
+  if( name.find( "724" ) != std::string::npos ||
+      name.find( "781" ) != std::string::npos ||
+      name.find( "782" ) != std::string::npos ) return 10;   // 100 MS/s
+  if( name.find( "725" ) != std::string::npos ) return 4;    // 250 MS/s
+  if( name.find( "730" ) != std::string::npos ) return 2;    // 500 MS/s
+  if( name.find( "720" ) != std::string::npos ) return 4;    // 250 MS/s
+
+  return 0;
+}
+
 bool RUReader::DecodeBoardInfo( uint32_t boardInfo, int index )
 {
   const uint32_t nsPerSample  =   boardInfo         & 0x3F;
@@ -269,23 +287,25 @@ bool RUReader::DecodeBoardInfo( uint32_t boardInfo, int index )
     }
   }
 
-  // Time stamp unit. The header is authoritative; the board family is only a
-  // fallback for headers that leave the field at zero.
-  uint32_t nsPerTick = nsPerTimetag;
-  if( nsPerTick == 0 ) nsPerTick = nsPerSample;
-  if( nsPerTick == 0 ){
-    if     ( info.name.find( "724" ) != std::string::npos ||
-             info.name.find( "781" ) != std::string::npos ||
-             info.name.find( "782" ) != std::string::npos ) nsPerTick = 10;
-    else if( info.name.find( "725" ) != std::string::npos ) nsPerTick = 4;
-    else if( info.name.find( "730" ) != std::string::npos ) nsPerTick = 2;
-    else if( info.name.find( "720" ) != std::string::npos ) nsPerTick = 4;
-    else                                                    nsPerTick = 1;
+  // Time stamp unit. The board family is authoritative, see BoardTimeStampLsb;
+  // the header is only a fallback for a board type that is not known here.
+  uint32_t nsPerTick = BoardTimeStampLsb( info.name );
 
-    std::cerr << "WARNING: the header of board " << boardRegId << " does not provide a time "
-              << "tag period, assuming " << nsPerTick << " ns from the board type."
+  if( nsPerTick == 0 ){
+    nsPerTick = nsPerSample ? nsPerSample : nsPerTimetag;
+    if( nsPerTick == 0 ) nsPerTick = 1;
+
+    std::cerr << "WARNING: the time stamp LSB of board type '" << info.name << "' (id "
+              << boardRegId << ") is not known, taking " << nsPerTick
+              << " ns from the header. Check the time stamps of that board."
               << std::endl;
   }
+  else if( nsPerTimetag != 0 && nsPerTimetag != nsPerTick ){
+    std::cerr << "NOTE: board " << boardRegId << " declares a time tag period of "
+              << nsPerTimetag << " ns, but a " << info.name << " counts in steps of "
+              << nsPerTick << " ns. Using " << nsPerTick << " ns." << std::endl;
+  }
+
   info.psPerTick = static_cast<uint64_t>( nsPerTick ) * 1000ull;
 
   DataFrame frame( info.dppType, info.name );
