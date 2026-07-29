@@ -81,11 +81,12 @@ bool ParseTimeUnit( const std::string& text, TimeUnit& unit )
 // ---------------------------------------------------------------------------
 
 RUReader::RUReader( std::map<int,std::string> name, bool ignoreFail, bool forceDual,
-                    bool ignorePsdBoards )
+                    bool ignorePsdBoards, std::map<int,int> waveSelect )
   : fUserNames( name ),
     fIgnoreFail( ignoreFail ),
     fForceDual( forceDual ),
-    fIgnorePsdBoards( ignorePsdBoards )
+    fIgnorePsdBoards( ignorePsdBoards ),
+    fWaveSelect( waveSelect )
 {
   // The trace containers are allocated once and resized in place, so that the
   // decoding of a waveform does not allocate anything per event.
@@ -102,6 +103,17 @@ RUReader::RUReader( std::map<int,std::string> name, bool ignoreFail, bool forceD
     std::cout << "--force-dual-trace found! RUReader will create two waveforms in the TTree!" << std::endl;
   if( fIgnorePsdBoards )
     std::cout << "--ignore-psd-boards found! RUReader will not save data from PSD firmware boards to the TTree!" << std::endl;
+
+  for( std::map<int,int>::const_iterator it = fWaveSelect.begin(); it != fWaveSelect.end(); ++it ){
+    if( it->second == 1 || it->second == 2 ){
+      std::cout << "Board " << it->first <<": will keep physical wave " << it->second 
+                << " when only a single trace is written." << std::endl;
+    }
+    else{
+      std::cerr << "WARNING: wave selection for board " << it->first
+                << " must be 1 or 2, ignoring (" << it->second << " given)." << std::endl;
+    }
+  }
 }
 
 RUReader::~RUReader( )
@@ -155,11 +167,11 @@ void RUReader::InitializeROOT( )
   fTree->SetMaxTreeSize( 10LL * 1024 * 1024 * 1024 );
 }
 
-void RUReader::InitializeWave( bool dualTrace )
+void RUReader::InitializeWave( )
 {
   if( fWaveInitialized ) return;
 
-  fWaveDual = dualTrace || fForceDual;
+  fWaveDual = fForceDual;
 
   if( fTree->GetEntries( ) > 0 ){
     std::ostringstream msg;
@@ -686,7 +698,7 @@ void RUReader::UnpackPHA( const uint32_t* buffer, uint32_t board, std::bitset<8>
       fTimeStamp = BuildTimeStamp( board, channel, rawTS, extendedTS, extendedBits,
                                    rollOver, fineTS, fineBits );
 
-      if( layout.hasTrace ) UnpackWave( buffer, layout, ev );
+      if( layout.hasTrace ) UnpackWave( buffer, layout, ev, board );
 
       if( fVerbose > 1 ){
         std::ostringstream msg;
@@ -816,7 +828,7 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
       fTimeStamp = BuildTimeStamp( board, channel, rawTS, extendedTS, extendedBits,
                                    false, fineTS, fineBits );
 
-      if( layout.hasTrace ) UnpackWave( buffer, layout, ev );
+      if( layout.hasTrace ) UnpackWave( buffer, layout, ev, board );
 
       if( fVerbose > 1 ){
         std::ostringstream msg;
@@ -842,9 +854,16 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
 // Waveforms
 // ---------------------------------------------------------------------------
 
-void RUReader::UnpackWave( const uint32_t* buffer, const DataLayout& layout, uint32_t pos )
+int RUReader::PreferredWave( int board ) const
 {
-  if( !fWaveInitialized ) InitializeWave( layout.dualTrace );
+  std::map<int,int>::const_iterator it = fWaveSelect.find( board );
+  if( it == fWaveSelect.end() || (it->second != 1 && it->second != 2 ) ) return 1;
+  return it->second;
+}
+
+void RUReader::UnpackWave( const uint32_t* buffer, const DataLayout& layout, uint32_t pos, uint32_t board )
+{
+  if( !fWaveInitialized ) InitializeWave( );
 
   const int nWords = layout.numSamples / 2;   // two samples per 32 bit word
   if( nWords <= 0 ) return;
@@ -856,7 +875,9 @@ void RUReader::UnpackWave( const uint32_t* buffer, const DataLayout& layout, uin
   const int dp2Lo    = layout.fmtDP2.first;
   const int dp2Hi    = layout.fmtDP2.second;
 
-  if( layout.dualTrace ){
+  if( layout.dualTrace && fWaveDual ){
+
+    // Hardware carries two probes and both are being kept (--force-dual-trace).
 
     // TArrayS::Set() is a no-op when the size does not change, so a run with a
     // constant record length never reallocates.
@@ -884,7 +905,35 @@ void RUReader::UnpackWave( const uint32_t* buffer, const DataLayout& layout, uin
       d22[idx] = static_cast<Short_t>( ExtractBits( word, dp2Lo    + 16, dp2Hi    + 16 ) );
     }
   }
+  else if ( layout.dualTrace ){
+
+    // Hardware carries two probes but only one is being kept for this board.
+
+    const int wave = PreferredWave( static_cast<int>( board ) );
+    const int shift = ( wave == 2 ) ? 16 : 0;
+
+    fWave1->Set( nWords );
+    fDigital11->Set( nWords );
+    fDigital21->Set( nWords );
+    fWave2->Set( 0 );
+    fDigital12->Set( 0 );
+    fDigital22->Set( 0 );
+
+    Short_t* w1 = fWave1->GetArray();
+    Short_t* d1 = fDigital11->GetArray();
+    Short_t* d2 = fDigital21->GetArray();
+
+    for( int idx = 0; idx < nWords; ++idx){
+      const uint32_t word = buffer[pos + 1 + idx];
+      w1[idx] = static_cast<Short_t>( ExtractBits( word, sampleLo + shift, sampleHi + shift) );
+      d1[idx] = static_cast<Short_t>( ExtractBits( word, dp1Lo + shift, dp1Hi + shift) );
+      d2[idx] = static_cast<Short_t>( ExtractBits( word, dp2Lo + shift, dp2Hi + shift) );
+    }
+
+  }
   else{
+
+    // Genuine single-trace hardware format: two consecutive samples packed per word.
 
     fWave1->Set( 2 * nWords );
     fDigital11->Set( 2 * nWords );

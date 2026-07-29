@@ -35,7 +35,8 @@ public:
   RUReader( std::map<int,std::string> name = std::map<int,std::string>( ),
             bool ignoreFail       = false,
             bool forceDual        = false,
-            bool ignorePsdBoards  = false );
+            bool ignorePsdBoards  = false,
+            std::map<int,int> waveSelect = {} );
   ~RUReader( );
 
   void SetTimeUnit( TimeUnit unit )      { fTimeUnit = unit; }
@@ -91,7 +92,7 @@ private:
                   uint32_t offset, uint32_t aggLength );
   void UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8> channelMask,
                   uint32_t offset, uint32_t aggLength );
-  void UnpackWave( const uint32_t* buffer, const DataLayout& layout, uint32_t pos );
+  void UnpackWave( const uint32_t* buffer, const DataLayout& layout, uint32_t pos, uint32_t board );
 
   // Rebuilds the full 64 bit time stamp and converts it to the requested unit.
   // extendedBits is 0 when the board does not send an extended time stamp.
@@ -102,7 +103,7 @@ private:
   // ------------------------------------------------------------------- writing
 
   void InitializeROOT( );
-  void InitializeWave( bool dualTrace );
+  void InitializeWave( );
 
   // ----------------------------------------------------------------- utilities
 
@@ -119,9 +120,15 @@ private:
   // ------------------------------------------------------------- configuration
 
   std::map<int,std::string> fUserNames;        // board names given with -d
+  std::map<int,int> fWaveSelect; // board id -> which physical wave (1 or 2) to keep
+                                 // in the tree when that board records two traces
+                                 // but --force-dual-trace was not requested.
+                                 // Boards absent from the map default to wave 1.
   std::array<BoardInfo,kMaxBoards> fBoards;
   std::array<DataFrame,kMaxBoards> fFrames;
   int fNumBoards = 0;
+
+  int PreferredWave( int board ) const;
 
   bool fIgnoreFail      = false;
   bool fForceDual       = false;

@@ -21,6 +21,9 @@ static void ShowUsage( const std::string& name )
     << "  -d, --dgtz <name> <id>   Override the board type read from the file header.\n"
     << "                           May be repeated. Not required: the header already\n"
     << "                           describes every board of the acquisition.\n"
+    << "  -w, --wave <1|2> <id>    When a board records two traces per event but only one is being kept\n"
+    << "                           (i.e force-dual-trace is not given), select which physical wave (1 or 2)\n"
+    << "                           to keep for board <id>. May be repeated, one board per use. Default: 1.\n"
     << "  -t, --ts-unit <unit>     Unit of the Timestamp branch: ps (default), ns, us,\n"
     << "                           ms, s or raw (the bare counter of the board).\n"
     << "  -c, --compression <0-9>  ROOT compression level (default: the ROOT setting).\n"
@@ -85,6 +88,7 @@ int main( int argc, char* argv[] )
   std::string fileIn;
   std::string fileOut;
   std::map<int,std::string> dgtz;
+  std::map<int,int> waveSelect;
 
   bool ignoreFail       = false;
   bool forceDual        = false;
@@ -115,6 +119,23 @@ int main( int argc, char* argv[] )
         return 1;
       }
       dgtz[boardId] = name;
+    }
+    else if( arg == "-w" || arg == "--wave" ){
+      if( !HasValue( argc, argv, i + 1 ) || !HasValue( argc, argv, i + 2 ) ){
+        std::cerr << "-w --wave requires two arguments: <wave 1|2> <board id>." << std::endl;
+      }
+      const int wave    = std::atoi(argv[++i]);
+      const int boardId = std::atoi(argv[++i]);
+      if( wave != 1 && wave !=2 ){
+        std::cerr << "ERROR: --wave expects 1 or 2, got " << wave << "." << std::endl;
+        return 1;
+      }
+      if( boardId < 0 || boardId >= RUReader::kMaxBoards ){
+        std::cerr << "ERROR: board id " << boardId << " is outside the range 0 - ";
+        std::cerr << RUReader::kMaxBoards - 1 << "." << std::endl;
+        return 1;
+      }
+      waveSelect[boardId] = wave;
     }
     else if( arg == "-i" || arg == "--in" ){
       if( !HasValue( argc, argv, i + 1 ) ){
@@ -200,7 +221,7 @@ int main( int argc, char* argv[] )
     return 1;
   }
 
-  RUReader reader( dgtz, ignoreFail, forceDual, ignorePsdBoards );
+  RUReader reader( dgtz, ignoreFail, forceDual, ignorePsdBoards, waveSelect );
   reader.SetTimeUnit( timeUnit );
   reader.SetVerbose( verbose );
   reader.SetCompression( compression );
