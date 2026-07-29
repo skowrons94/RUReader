@@ -54,7 +54,7 @@ RUReader -i run1.caendat -o run1.root -d DT5725 0 -d V1730 1
 | `-i, --in <path>` | Input `.caendat` file, or a directory containing them. |
 | `-o, --out <path>` | Output ROOT file. |
 | `-d, --dgtz <name> <id>` | Override the board type read from the header. Repeatable. |
-| `-w, --waves <wave 1|2> <id>` | When two waves are available for that board, select which to store. Repeatable. |  
+| `-w, --waves <1 or 2> <id>` | When two waves are available for that board, select which to store. Repeatable. |  
 | `-t, --ts-unit <unit>` | Unit of the `Timestamp` branch: `ps` (default), `ns`, `us`, `ms`, `s` or `raw`. |
 | `-c, --compression <0-9>` | ROOT compression level. Lower is faster and bigger. |
 | `-b, --buffer <MB>` | Read buffer size, 64 MB by default. |
