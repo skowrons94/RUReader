@@ -133,6 +133,7 @@ RUReader::~RUReader( )
 void RUReader::InitializeROOT( )
 {
   fFileOut = new TFile( fFileOutName.c_str( ), "RECREATE" );
+  if( fCompressAlgo >= 0) fFileOut->SetCompressionAlgorithm( fCompressAlgo );
   if( fCompression >= 0 ) fFileOut->SetCompressionLevel( fCompression );
 
   bool hasPHA = false;

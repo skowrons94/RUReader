@@ -41,6 +41,7 @@ public:
 
   void SetTimeUnit( TimeUnit unit )      { fTimeUnit = unit; }
   void SetVerbose( int level )           { fVerbose = level; }
+  void SetCompressionAlgorithm( int algo ) { fCompressAlgo = algo; }
   void SetCompression( int level )       { fCompression = level; }
   void SetBufferSize( uint64_t bytes )   { fBufferWords = bytes / sizeof(uint32_t); }
 
@@ -134,6 +135,7 @@ private:
   bool fForceDual       = false;
   bool fIgnorePsdBoards = false;
   int  fVerbose         = 0;
+  int  fCompressAlgo    = -1;                  // -1: leave the ROOT default
   int  fCompression     = -1;                  // -1: leave the ROOT default
   TimeUnit fTimeUnit    = TimeUnit::Picosecond;
 

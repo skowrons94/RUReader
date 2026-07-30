@@ -26,6 +26,7 @@ static void ShowUsage( const std::string& name )
     << "                           to keep for board <id>. May be repeated, one board per use. Default: 1.\n"
     << "  -t, --ts-unit <unit>     Unit of the Timestamp branch: ps (default), ns, us,\n"
     << "                           ms, s or raw (the bare counter of the board).\n"
+    << "  -a, --algo <name>        ROOT compression algorithm: zlib(default), lzma, lz4, zstd.\n"
     << "  -c, --compression <0-9>  ROOT compression level (default: the ROOT setting).\n"
     << "  -b, --buffer <MB>        Size of the read buffer, in MB (default: 64).\n"
     << "  -v, --verbose            Print more information, twice for every event.\n"
@@ -94,6 +95,8 @@ int main( int argc, char* argv[] )
   bool forceDual        = false;
   bool ignorePsdBoards  = false;
   int  verbose          = 0;
+  int  compressAlgo     = -1;
+  std::string compressAlgoName = "default (zlib)";
   int  compression      = -1;
   uint64_t bufferBytes  = 64ull * 1024 * 1024;
   TimeUnit timeUnit     = TimeUnit::Picosecond;
@@ -163,6 +166,23 @@ int main( int argc, char* argv[] )
         return 1;
       }
     }
+    else if( arg == "-a" || arg == "--algo" ){
+      if( !HasValue( argc, argv, i + 1 ) ){
+        std::cerr << "-a --algo requires one argument." << std::endl;
+        return 1;
+      }
+      const std::string name = argv[++i];
+      if      ( name == "zlib" ) compressAlgo = ROOT::RCompressionSetting::EAlgorithm::kZLIB;
+      else if ( name == "lzma" ) compressAlgo = ROOT::RCompressionSetting::EAlgorithm::kLZMA;
+      else if ( name == "lz4"  ) compressAlgo = ROOT::RCompressionSetting::EAlgorithm::kLZ4;
+      else if ( name == "zstd" ) compressAlgo = ROOT::RCompressionSetting::EAlgorithm::kZSTD;
+      else{
+        std::cerr << "ERROR: unknown algorithm '" << name << "'. use zlib, lzma, lz4, or zstd."
+                  << std::endl;
+        return 1;
+      }
+      compressAlgoName = name;
+    }
     else if( arg == "-c" || arg == "--compression" ){
       if( !HasValue( argc, argv, i + 1 ) ){
         std::cerr << "-c --compression requires one argument." << std::endl;
@@ -221,9 +241,12 @@ int main( int argc, char* argv[] )
     return 1;
   }
 
+  std::cout<<"Using compressAlgo " << compressAlgoName <<" at level "<<compression<<std::endl;
+
   RUReader reader( dgtz, ignoreFail, forceDual, ignorePsdBoards, waveSelect );
   reader.SetTimeUnit( timeUnit );
   reader.SetVerbose( verbose );
+  reader.SetCompressionAlgorithm( compressAlgo );
   reader.SetCompression( compression );
   reader.SetBufferSize( bufferBytes );
 
