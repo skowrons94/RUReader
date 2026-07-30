@@ -150,6 +150,7 @@ private:
   bool     fPu        = false;
   bool     fSatu      = false;
   bool     fLost      = false;
+  bool     fTrigLost  = false;
   uint16_t fBoard     = 0;
   uint16_t fChannel   = 0;
   uint64_t fTimeStamp = 0;

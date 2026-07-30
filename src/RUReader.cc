@@ -23,8 +23,9 @@ namespace {
   const uint32_t kPhaLostBit     = 0x20;   // lost event
 
   // Bits of the PSD extra word when it carries the flags (extras mode 1).
-  const uint32_t kPsdLostBit = 0x00001000;
-  const uint32_t kPsdOverBit = 0x00004000;
+  const uint32_t kPsdLostBit = 0x00001000; // bit 12, N lost trigger counted
+  const uint32_t kPsdOverBit = 0x00004000; // bit 14, saturated event
+  const uint32_t kPsdTrigLostBit = 0x00008000; // bit 15, Trigger Lost
 
   const int kMaxWrapMessages   = 20;
   const int kMaxHeaderWords    = 1024;     // sanity limit for the XDAQ header
@@ -150,6 +151,9 @@ void RUReader::InitializeROOT( )
   fTree->Branch( "PU"       ,        &fPu,        "PU/O" );
   fTree->Branch( "SATU"     ,      &fSatu,      "SATU/O" );
   fTree->Branch( "LOST"     ,      &fLost,      "LOST/O" );
+  if( hasPSD ){ 
+    fTree->Branch( "TRIG_LOST", &fTrigLost, "TRIG_LOST/O");
+  }
   fTree->Branch( "Board"    ,     &fBoard,     "Board/s" );
   fTree->Branch( "Channel"  ,   &fChannel,   "Channel/s" );
   fTree->Branch( "Timestamp", &fTimeStamp, "Timestamp/l" ); // CoMPASS spells it Timestamp
@@ -779,6 +783,7 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
       int      extendedBits = 0;
       bool     over         = false;
       bool     lost         = false;
+      bool     trigLost     = false;
       uint16_t fineTS       = 0;
       int      fineBits     = 0;
 
@@ -797,11 +802,15 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
               flags        = extras2 & 0xFFFF;
               over         = ( extras2 & kPsdOverBit ) != 0;
               lost         = ( extras2 & kPsdLostBit ) != 0;
+              trigLost     = ( extras2 & kPsdTrigLostBit ) != 0;
               break;
             case 2:  // extended time stamp [31:16], flags [15:10], fine TS [9:0]
               extendedTS   = extras2 >> 16;
               extendedBits = 16;
               flags        = ( extras2 >> 10 ) & 0x3F;
+              over         = ( extras2 & kPsdOverBit ) != 0;
+              lost         = ( extras2 & kPsdLostBit ) != 0;
+              trigLost     = ( extras2 & kPsdTrigLostBit ) != 0;
               fineTS       = extras2 & 0x3FF;
               fineBits     = 10;
               break;
@@ -819,6 +828,7 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
       fPu        = pileUp;
       fSatu      = over;
       fLost      = lost;
+      fTrigLost  = trigLost;
       fBoard     = static_cast<uint16_t>( board );
       fChannel   = static_cast<uint16_t>( channel );
       fQShort    = qshort;
