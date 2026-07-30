@@ -16,11 +16,31 @@
 
 namespace {
 
-  // Bits of the "Extras" field of the PHA energy word.
-  const uint32_t kPhaSatuBit     = 0x01;   // input saturation
-  const uint32_t kPhaRollOverBit = 0x02;   // time stamp roll over (fake event)
-  const uint32_t kPhaFakeBit     = 0x04;   // fake event
-  const uint32_t kPhaLostBit     = 0x20;   // lost event
+  // Bits of the "Extras" field of the PHA energy word, as listed in UM6769
+  // rev.2 ("Channel Aggregate Data Format for 724, 781 and 782 series"). Four
+  // of these were off by one or more positions and were reading the wrong
+  // flag entirely — saturation was taken from DEAD_TIME, which the boards here
+  // never raise, so no saturated event was ever reported.
+  const uint32_t kPhaDeadTimeBit  = 0x01;  // bit[0] dead time before this event
+  const uint32_t kPhaRollOverBit  = 0x02;  // bit[1] a roll-over happened before this event
+  const uint32_t kPhaTTResetBit   = 0x04;  // bit[2] time stamp reset forced from S-IN
+  const uint32_t kPhaFakeBit      = 0x08;  // bit[3] fake event marking a roll-over/reset
+  const uint32_t kPhaSatuBit      = 0x10;  // bit[4] input saturation
+  const uint32_t kPhaLostBit      = 0x20;  // bit[5] lost-trigger tag
+  const uint32_t kPhaTotTrgBit    = 0x40;  // bit[6] total-trigger tag
+  const uint32_t kPhaDoubleSatBit = 0x80;  // bit[7] input stage AND trapezoid saturated
+
+  // The board announces every roll-over with a fake event carrying BOTH
+  // FAKE_EVENT and ROLL_OVER (0x1n80[26] enables it; Time Stamp = 0, Energy = 0,
+  // PU = 1). ROLL_OVER alone is not that marker — it is also set on ordinary
+  // events that follow a roll-over, so counting it alone badly overcounts on
+  // busy channels.
+  const uint32_t kPhaRollOverMarker = kPhaFakeBit | kPhaRollOverBit;
+
+  // LOST_TRG and TOT_TRG are scalers, not per-event flags: the board raises them
+  // once every N triggers, N = 1024 / 128 / 8192 per 0x1nA0[17:16]. A count of
+  // set bits is therefore a count of N-trigger groups, not of lost events, and
+  // has to be scaled by N before it means anything.
 
   // Bits of the PSD extra word when it carries the flags (extras mode 1).
   const uint32_t kPsdLostBit = 0x00001000; // bit 12, N lost trigger counted
@@ -541,7 +561,7 @@ void RUReader::UnpackHeader( const uint32_t* buffer, uint32_t offset,
 
 uint64_t RUReader::BuildTimeStamp( uint32_t board, uint32_t channel, uint64_t rawTS,
                                    uint32_t extendedTS, int extendedBits,
-                                   bool rollOverFlag, uint16_t fineTS, int fineBits )
+                                   bool rollOverMarker, uint16_t fineTS, int fineBits )
 {
   const DataLayout& layout = fFrames[board].Layout( );
   ChannelState& state = fChannels[board][channel];
@@ -556,46 +576,114 @@ uint64_t RUReader::BuildTimeStamp( uint32_t board, uint32_t channel, uint64_t ra
     width = layout.tsBits + extendedBits;
   }
 
-  if( rollOverFlag ) ++state.rollOverFlags;
-
-  // A counter of `width` bits restarts from zero every `range` counts. A time
-  // stamp that jumps backwards by more than half of the range is such a reset,
-  // a smaller step backwards is an out of order event and is only reported.
+  // A counter of `width` bits restarts from zero every `range` counts.
   const uint64_t range = ( width >= 64 ) ? 0 : ( 1ull << width );
 
-  if( state.seen && raw < state.lastRaw ){
-    if( range != 0 && ( state.lastRaw - raw ) > range / 2 ){
-      ++state.wraps;
+  // The boards do not sort their output: an event from just before a wrap can
+  // arrive just after one. So "the time stamp went backwards by more than half
+  // the range, therefore the counter reset" — comparing against the PREVIOUS
+  // event — invents resets that never happened, and each invented one adds a
+  // whole `range` to every later event of that channel for good. One straggler
+  // used to turn a 95 s run into a 105 s one.
+  //
+  // Two things can be known about the wrap count, in order of authority:
+  //
+  //   1. the board says so. DPP-PHA on 724/781/782 emits a fake event carrying
+  //      FAKE_EVENT|ROLL_OVER at every wrap (0x1n80[26]). That count is exact
+  //      and survives arbitrary gaps between events, so once such a marker has
+  //      been seen on a channel nothing else is allowed to move the epoch.
+  //
+  //   2. nobody says so. PSD firmware has no equivalent marker, and its time
+  //      tag can also be reset from S-IN, so the wrap has to be inferred. That
+  //      still has to happen — a long PSD run does run out of its extended
+  //      counter — but the inference is anchored on the running reference
+  //      below rather than on the previous event, which is what makes it
+  //      immune to the reordering.
+  //
+  // Either way the event is finally placed in whichever epoch puts it CLOSEST
+  // to where the channel already is. A straggler then lands one epoch back,
+  // exactly where it belongs, instead of dragging the channel with it.
+
+  if( rollOverMarker ){
+    ++state.rollOverMarkers;
+    state.trustMarkers = true;
+    // Never backwards. The epoch can legitimately be ahead of the marker count
+    // already — because an earlier marker was lost and inferred, or because
+    // events of the new epoch overtook this marker in the unsorted stream — and
+    // in both cases this wrap is accounted for.
+    const bool alreadyCounted = state.epoch >= state.rollOverMarkers;
+    if( !alreadyCounted ){
+      state.epoch = state.rollOverMarkers;
+      ++fStats.timeStampWraps;
+    }
+
+    if( !alreadyCounted && fWrapMessages < kMaxWrapMessages ){
+      ++fWrapMessages;
+      std::ostringstream msg;
+      msg << "*** Time stamp roll-over on board " << board << " channel " << channel
+          << " (" << width << " bit counter, roll-over #" << state.rollOverMarkers
+          << ", reported by the board). The missing " << width << " bits are added back.";
+      if( fWrapMessages == kMaxWrapMessages )
+        msg << "\n*** Further roll-overs are only counted, see the final statistics.";
+      ReportLine( msg.str( ) );
+    }
+  }
+
+  uint64_t full = raw;
+
+  if( range != 0 ){
+    // Candidate epochs: one back (a straggler from before the last wrap), the
+    // current one, and — only where no marker is available — one forward.
+    // One epoch forward stays reachable even on a board that does emit markers:
+    // busy channels lose some, and a lost marker would otherwise cost a whole
+    // `range` off every later event. Nothing is given away by allowing it — a
+    // straggler is always nearer the epoch it came from than the next one, so
+    // only a genuine wrap ever selects `epoch + 1`.
+    const uint64_t highest = state.epoch + 1;
+    const uint64_t lowest  = ( state.epoch > 0 ) ? state.epoch - 1 : 0;
+
+    uint64_t bestEpoch = state.epoch;
+    uint64_t bestDist  = UINT64_MAX;
+    for( uint64_t cand = lowest; cand <= highest; ++cand ){
+      const uint64_t candFull = raw + cand * range;
+      const uint64_t dist = ( candFull > state.reference ) ? candFull - state.reference
+                                                           : state.reference - candFull;
+      if( !state.seen || dist < bestDist ){ bestDist = dist; bestEpoch = cand; }
+      if( !state.seen ) break;   // nothing to compare against yet
+    }
+
+    if( bestEpoch > state.epoch ){
+      // A wrap nobody announced: either the board has no marker at all (PSD),
+      // or it does and this one did not survive the readout.
+      state.epoch = bestEpoch;
+      ++state.softwareWraps;
       ++fStats.timeStampWraps;
 
       if( fWrapMessages < kMaxWrapMessages ){
         ++fWrapMessages;
         std::ostringstream msg;
         msg << "*** Time stamp reset on board " << board << " channel " << channel
-            << ": " << state.lastRaw << " -> " << raw << " (" << width
-            << " bit counter, reset #" << state.wraps << "). "
+            << " (" << width << " bit counter, reset #" << state.epoch
+            << ", inferred — "
+            << ( state.trustMarkers ? "the board's roll-over for it is missing"
+                                    : "this board reports no roll-over" ) << "). "
             << "The missing " << width << " bits are added back.";
         if( fWrapMessages == kMaxWrapMessages )
           msg << "\n*** Further resets are only counted, see the final statistics.";
         ReportLine( msg.str( ) );
       }
     }
-    else{
-      ++state.backwardJumps;
-      ++fStats.backwardStamps;
-    }
+
+    full = raw + bestEpoch * range;
   }
 
-  state.lastRaw = raw;
-  state.seen    = true;
-
-  // Without the extended time stamp the board signals every reset of the
-  // counter with a roll-over flag, which also survives long gaps between two
-  // events on the same channel. With it, the software detection is used.
-  uint64_t wraps = state.wraps;
-  if( !hasExtended && state.rollOverFlags > wraps ) wraps = state.rollOverFlags;
-
-  const uint64_t full = ( range == 0 ) ? raw : raw + wraps * range;
+  // An event arriving before the one ahead of it is normal — the boards do not
+  // sort their output — so it is placed and otherwise ignored.
+  state.lastRaw   = raw;
+  state.seen      = true;
+  // The anchor only ever moves forward, so a straggler cannot pull it back and
+  // make the next in-order event look like a fresh wrap.
+  if( full > state.reference ) state.reference = full;
 
   if( fTimeUnit == TimeUnit::Raw ) return full;
 
@@ -660,10 +748,20 @@ void RUReader::UnpackPHA( const uint32_t* buffer, uint32_t board, std::bitset<8>
 
       if( channel >= kMaxChannels ){ ++fStats.droppedEvents; continue; }
 
-      const bool pileUp   = ( energyWord >> 15 ) & 0x1;
-      const bool rollOver = ( extras & kPhaRollOverBit ) != 0;
-      const bool lost     = ( extras & kPhaLostBit     ) != 0;
-      const bool satu     = ( extras & kPhaSatuBit     ) != 0;
+      const bool pileUp = ( energyWord >> 15 ) & 0x1;
+      const bool lost   = ( extras & kPhaLostBit ) != 0;
+      // Saturation covers both the input stage alone and the case where the
+      // trapezoid saturates with it — either way the energy is unusable.
+      const bool satu   = ( extras & ( kPhaSatuBit | kPhaDoubleSatBit ) ) != 0;
+      const bool dead   = ( extras & kPhaDeadTimeBit ) != 0;
+
+      // Only the board's own fake event marks a roll-over. ROLL_OVER on its own
+      // rides along on ordinary events that merely follow one, and TT_RESET
+      // marks an external reset from S-IN, which the fake event also carries.
+      const bool rollOverMarker =
+          ( extras & kPhaRollOverMarker ) == kPhaRollOverMarker ||
+          ( extras & ( kPhaFakeBit | kPhaTTResetBit ) ) == ( kPhaFakeBit | kPhaTTResetBit );
+      if( dead ) ++fStats.deadTimeEvents;
 
       uint32_t extras2      = 0;
       uint32_t extendedTS   = 0;
@@ -701,7 +799,7 @@ void RUReader::UnpackPHA( const uint32_t* buffer, uint32_t board, std::bitset<8>
       fQShort    = 0;
       fQLong     = 0;
       fTimeStamp = BuildTimeStamp( board, channel, rawTS, extendedTS, extendedBits,
-                                   rollOver, fineTS, fineBits );
+                                   rollOverMarker, fineTS, fineBits );
 
       if( layout.hasTrace ) UnpackWave( buffer, layout, ev, board );
 
@@ -716,10 +814,13 @@ void RUReader::UnpackPHA( const uint32_t* buffer, uint32_t board, std::bitset<8>
 
       ++fStats.totalEvents;
       if( extras & kPhaFakeBit ) ++fStats.fakeEvents;
+      if( satu )                 ++fStats.saturatedEvents;
+      if( lost )                 ++fStats.lostTriggerTags;
 
       ChannelState& state = fChannels[board][channel];
       ++state.events;
       state.lastStamp = fTimeStamp;
+      if( fTimeStamp > state.maxStamp ) state.maxStamp = fTimeStamp;
     }
 
     pos += coupleSize;
@@ -855,6 +956,7 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
       ChannelState& state = fChannels[board][channel];
       ++state.events;
       state.lastStamp = fTimeStamp;
+      if( fTimeStamp > state.maxStamp ) state.maxStamp = fTimeStamp;
     }
 
     pos += coupleSize;
@@ -1345,19 +1447,23 @@ void RUReader::PrintStatistics( ) const
       // Convert the last time stamp to a wall clock duration.
       const uint64_t unitPs = ( fTimeUnit == TimeUnit::Raw ) ? fBoards[board].psPerTick
                                                              : TimeUnitPicoseconds( fTimeUnit );
-      const double totalSeconds = static_cast<double>( state.lastStamp ) * unitPs * 1e-12;
+      const double totalSeconds = static_cast<double>( state.maxStamp ) * unitPs * 1e-12;
       const int hours   = static_cast<int>( totalSeconds / 3600 );
       const int minutes = static_cast<int>( ( totalSeconds - hours * 3600 ) / 60 );
       const double rest = totalSeconds - hours * 3600 - minutes * 60;
 
       out << "    Ch " << std::setw( 2 ) << ch << ": " << std::setw( 10 ) << state.events
-          << " events (last TS: " << state.lastStamp
+          << " events (highest TS: " << state.maxStamp
           << " = " << hours << "h " << minutes << "m " << rest << "s)";
 
-      if( state.wraps > 0 || state.rollOverFlags > 0 || state.backwardJumps > 0 ){
-        out << "\n           resets: " << state.wraps << " detected";
-        if( state.rollOverFlags > 0 ) out << ", " << state.rollOverFlags << " roll-over flag(s)";
-        if( state.backwardJumps > 0 ) out << ", " << state.backwardJumps << " backward jump(s)";
+      if( state.epoch > 0 ){
+        out << "\n           counter wraps: " << state.epoch;
+        // Which of the two mechanisms produced them matters when a run looks
+        // wrong: a marker count is the board's own, an inferred one is a guess.
+        if( state.trustMarkers )
+          out << " (" << state.rollOverMarkers << " reported by the board)";
+        else if( state.softwareWraps > 0 )
+          out << " (inferred; this board reports no roll-over)";
       }
       out << "\n";
     }
@@ -1369,15 +1475,19 @@ void RUReader::PrintStatistics( ) const
   out << std::setprecision( 2 );
   out << "\nData Quality:\n";
   out << "  Corruption rate:    " << corruptedRate << "%\n";
-  out << "  Time stamp resets:  " << fStats.timeStampWraps << "\n";
-  out << "  Backward stamps:    " << fStats.backwardStamps << "\n";
+  out << "  Counter wraps:      " << fStats.timeStampWraps << "\n";
+  if( fStats.saturatedEvents )
+    out << "  Saturated events:   " << fStats.saturatedEvents << " (energy unusable)\n";
+  if( fStats.deadTimeEvents )
+    out << "  Dead time before:   " << fStats.deadTimeEvents << " event(s)\n";
+  if( fStats.lostTriggerTags )
+    out << "  Lost-trigger tags:  " << fStats.lostTriggerTags
+        << " (one per N lost triggers, N from 0x1nA0[17:16], default 1024)\n";
 
   if( fStats.failedBoards > 0 )
     out << "  WARNING: " << fStats.failedBoards << " board failure(s) detected!\n";
   if( corruptedRate > 1.0 )
     out << "  WARNING: High corruption rate detected!\n";
-  if( fStats.backwardStamps > 0 )
-    out << "  WARNING: some events are not in time order, check the board configuration.\n";
 
   std::cout << out.str( );
   std::cout << std::string( 60, '=' ) << std::endl;
