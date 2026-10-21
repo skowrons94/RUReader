@@ -63,6 +63,48 @@ RUReader -i run1.caendat -o run1.root -d DT5725 0 -d V1730 1
 | `--ignore-fail` | Ignore the board failure flag instead of asking. |
 | `--force-dual-trace` | Always create two trace branches. |
 | `--ignore-psd-boards` | Do not write the events of PSD firmware boards. |
+| `--no-run-context` | Do not store `current.txt`, `stats.csv` and `metadata.json` of the run directory (see below). |
+
+## Output file
+
+The output is written as `<output>.part` and renamed to `<output>` only once it
+has been closed, so a file with the final name is always complete; an older
+`<output>` is removed when the conversion starts. The metadata (`StartEpoch`,
+`TimestampUnit`, `Boards`), the run context and the (empty) `Data` tree are
+written as soon as the file is opened. The baskets of the tree are flushed every
+~30 MB of compressed data (`SetAutoFlush(-30000000)`), which bounds the memory
+used, and the tree is saved together with the directory of the file
+(`AutoSave("SaveSelf")`) at the end of the first cluster and then at the end of
+a cluster every ~100 MB written. A conversion that is killed therefore leaves a
+`.part` file that ROOT opens normally, with every entry up to the last save.
+
+A file reaching 10 GB is continued in a new one. ROOT names the parts itself
+(`<output>_1.part`, `<output>_2.part`, ...); at the end they are renamed the way
+ROOT names them without the temporary suffix: `run1.root`, `run1_1.root`,
+`run1_2.root`... Every part carries the metadata and the run context.
+
+## Run context
+
+WebDAQ writes three more files in the run directory, next to the raw data. When
+they are found in the directory given with `-i`, or in the directory of the file
+given with `-i`, they are stored in the ROOT file (each one is optional; a
+missing one is only reported):
+
+| Object | Type | From |
+| --- | --- | --- |
+| `RunMetadata` | `TNamed` | `metadata.json`, verbatim (the title is the JSON text) |
+| `AccumulatedCharge_metadata` | `TParameter<double>` | the `"Accumulated Charge"` value of `metadata.json`, as WebDAQ stores it |
+| `Current/Current`, `Current/Current_<n>` | `TGraph` | `current.txt`: current [µA] against time since the start of the run [s], one graph per current column |
+| `Current/AccumulatedCharge_uC[_<n>]` | `TParameter<double>` | charge in µC (µA·s), trapezoidal rule, steps with dt <= 0 skipped: the same number as WebDAQ's `integrate_current` |
+| `Current/MeanCurrent_uA[_<n>]`, `Current/Duration_s` | `TParameter<double>` | charge / duration, and last minus first time |
+| `Current/StartTime` | `TNamed` | the `### Start time: ... ###` line |
+| `Stats/<alias>` | `TGraph` | `stats.csv`: one graph per metric, named after its alias (letters, digits and `_` only), titled `<alias> [unit]` |
+| `Stats/<alias>_source` | `TNamed` | the Graphite path of the metric |
+| `Stats/StartTime` | `TNamed` | the `# Start time:` line |
+
+Lines caught half written are dropped: a `current.txt` line that does not parse,
+a `stats.csv` row shorter than the column row. Use `--no-run-context` to leave
+all of this out.
 
 ## Time stamps
 
@@ -99,3 +141,9 @@ The tree is called `Data` and holds one entry per event:
 
 The dual trace branch names are used when the board runs in dual trace mode or
 when `--force-dual-trace` is given.
+
+A board can be set up to leave the time stamp and/or the energy (charge, for
+PSD) out of its events (Board Configuration 0x8000, bits 18/19), sending only
+the trace. Those events are written with `Timestamp` = 0, `Energy` = 0 (or
+`EnergyShort` = `EnergyLong` = 0) and `PU` = 0, and counted in the final
+statistics.

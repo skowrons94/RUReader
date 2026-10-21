@@ -250,7 +250,7 @@ void RUReader::StartNewFile( )
   fPartNames.push_back( fFileOut->GetName( ) );
 
   std::ostringstream msg;
-  msg << "Output file larger than " << ( kMaxTreeBytes >> 30 ) << " GB, continuing in '"
+  msg << "Output file larger than " << kMaxTreeBytes / 1073741824.0 << " GB, continuing in '"
       << fFileOut->GetName( ) << "' (renamed to '" << RollOverName( fFileOutName, fFileNumber )
       << "' at the end).";
   ReportLine( msg.str( ) );
