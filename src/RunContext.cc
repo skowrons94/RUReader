@@ -602,7 +602,7 @@ void RunContext::Write( TDirectory* where ) const
       const std::string suffix = ( c == 0 ) ? "" : "_" + std::to_string( c );
       TParameter<double> charge( ( "AccumulatedCharge_uC" + suffix ).c_str( ), fCharges[c] );
       TParameter<double> mean  ( ( "MeanCurrent_uA" + suffix ).c_str( ),
-                                 fCurrentDuration > 0 ? fCharges[c] / fCurrentDuration : 0.0 );
+                                 fCurrentDuration > fUncovered ? fCharges[c] / ( fCurrentDuration - fUncovered ) : 0.0 );
       dir->WriteTObject( &charge, nullptr, "Overwrite" );
       dir->WriteTObject( &mean,   nullptr, "Overwrite" );
     }

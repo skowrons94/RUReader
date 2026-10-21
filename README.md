@@ -99,7 +99,7 @@ reported):
 | `RunFiles/<file name>` | `TNamed` | every other `.json`, `.cal` and `.jsonl` file of the directory, verbatim (the title is the text): each board's register dump, its energy calibration, the ROIs, the coincidence gates and histogram settings, the calibration and register changes made during the run |
 | `Current/Current`, `Current/Current_<n>` | `TGraph` | `current.txt`: current [µA] against time since the start of the run [s], one graph per current column |
 | `Current/AccumulatedCharge_uC[_<n>]` | `TParameter<double>` | charge in µC (µA·s) over the run, from its start to its stop (`metadata.json`): readings joined by straight lines, the first held back to the start and the last up to the stop, steps with dt <= 0 skipped. The same number WebDAQ records live and shows on its Data page |
-| `Current/MeanCurrent_uA[_<n>]`, `Current/Duration_s` | `TParameter<double>` | charge / duration, and the span the charge covers |
+| `Current/MeanCurrent_uA[_<n>]`, `Current/Duration_s` | `TParameter<double>` | charge / (duration − uncovered time), and the span the charge covers |
 | `Current/ChargeSpan` | `TNamed` | `run`, or `readings` when the run's start or stop time is unknown and the charge spans the first to the last reading |
 | `Current/Uncovered_s` | `TParameter<double>` | seconds of the span with no current reading for more than 10 s (the monitor was silent); that time is left out of the charge, as WebDAQ does |
 | `Current/StartTime` | `TNamed` | the `### Start time: ... ###` line |
