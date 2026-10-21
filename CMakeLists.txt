@@ -26,6 +26,7 @@ add_executable(RUReader
   ${SRC_DIR}/DataFrame.cc
   ${SRC_DIR}/DataFrameBuilderPHA.cc
   ${SRC_DIR}/DataFrameBuilderPSD.cc
+  ${SRC_DIR}/RunContext.cc
 )
 
 # std::filesystem, used to scan a run directory, requires C++17.

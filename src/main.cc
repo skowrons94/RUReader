@@ -33,6 +33,8 @@ static void ShowUsage( const std::string& name )
     << "      --ignore-fail        Ignore the board failure flag without asking.\n"
     << "      --force-dual-trace   Always create two trace branches in the TTree.\n"
     << "      --ignore-psd-boards  Do not write the events of PSD firmware boards.\n"
+    << "      --no-run-context     Do not store current.txt, stats.csv and metadata.json\n"
+    << "                           of the run directory in the ROOT file.\n"
     << "  -h, --help               Show this help message.\n"
     << std::endl;
 }
@@ -94,6 +96,7 @@ int main( int argc, char* argv[] )
   bool ignoreFail       = false;
   bool forceDual        = false;
   bool ignorePsdBoards  = false;
+  bool runContext       = true;
   int  verbose          = 0;
   int  compressAlgo     = -1;
   std::string compressAlgoName = "default (zlib)";
@@ -218,6 +221,9 @@ int main( int argc, char* argv[] )
     else if( arg == "--ignore-psd-boards" ){
       ignorePsdBoards = true;
     }
+    else if( arg == "--no-run-context" ){
+      runContext = false;
+    }
     else{
       std::cerr << "Unknown option: " << arg << std::endl;
       ShowUsage( argv[0] );
@@ -249,6 +255,18 @@ int main( int argc, char* argv[] )
   reader.SetCompressionAlgorithm( compressAlgo );
   reader.SetCompression( compression );
   reader.SetBufferSize( bufferBytes );
+
+  // WebDAQ writes current.txt, stats.csv and metadata.json in the run directory,
+  // next to the raw data: the directory given with -i, or the one of the file.
+  if( runContext ){
+    std::error_code ec;
+    const std::string runDir = fs::is_directory( fileIn, ec )
+      ? fileIn : fs::path( fileIn ).parent_path( ).string( );
+    reader.SetRunContext( runDir.empty( ) ? "." : runDir );
+  }
+  else{
+    std::cout << "--no-run-context found! RUReader will not store the run context!" << std::endl;
+  }
 
   if( !reader.ReadMultiple( inputFiles, fileOut ) ){
     std::cerr << "\nConversion failed." << std::endl;

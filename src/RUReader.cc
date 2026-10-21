@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -151,11 +152,24 @@ RUReader::~RUReader( )
 // ROOT output
 // ---------------------------------------------------------------------------
 
-void RUReader::InitializeROOT( )
+bool RUReader::InitializeROOT( )
 {
-  fFileOut = new TFile( fFileOutName.c_str( ), "RECREATE" );
+  // The output of an earlier conversion goes away now, as it did when the file
+  // was opened under its final name: a crash must not leave an old, complete
+  // file looking like the result of this conversion.
+  std::remove( fFileOutName.c_str( ) );
+
+  const std::string partName = fFileOutName + ".part";
+  fFileOut = new TFile( partName.c_str( ), "RECREATE" );
+  if( !fFileOut || fFileOut->IsZombie( ) ){
+    std::cerr << "ERROR: cannot create the output file '" << partName << "'." << std::endl;
+    return false;
+  }
   if( fCompressAlgo >= 0) fFileOut->SetCompressionAlgorithm( fCompressAlgo );
   if( fCompression >= 0 ) fFileOut->SetCompressionLevel( fCompression );
+
+  fPartNames.assign( 1, partName );
+  fFileNumber = 0;
 
   bool hasPHA = false;
   bool hasPSD = false;
@@ -188,8 +202,106 @@ void RUReader::InitializeROOT( )
     fTree->Branch( "EnergyLong" ,  &fQLong,  "EnergyLong/s" );
   }
 
-  fTree->SetMaxVirtualSize( 2000000000LL );
-  fTree->SetMaxTreeSize( 10LL * 1024 * 1024 * 1024 );
+  // Memory stays bounded by the baskets of one cluster: they are written out
+  // every kAutoFlushBytes of compressed data. ROOT's own AutoSave is turned off
+  // because it does not save the directory of the file (a killed conversion
+  // then leaves a file that has to be recovered key by key); SaveCheckPoint
+  // does it instead. SetMaxVirtualSize is left at the ROOT default: it only
+  // limits the baskets kept in memory when READING, and 2 GB of them was never
+  // what this program needed.
+  fTree->SetAutoFlush( -kAutoFlushBytes );
+  fTree->SetAutoSave( 0 );
+  TTree::SetMaxTreeSize( kMaxTreeBytes );
+
+  WriteRunInfo( );
+
+  return true;
+}
+
+void RUReader::FillTree( )
+{
+  fTree->Fill( );
+
+  // On a roll-over Fill has closed the full file and opened the next one.
+  if( fTree->GetFileNumber( ) != fFileNumber ) StartNewFile( );
+
+  // After the first flush GetAutoFlush is the cluster size in entries, and an
+  // entry count that is a multiple of it means every basket has just been
+  // written: the save then costs the tree header and nothing more.
+  const Long64_t cluster = fTree->GetAutoFlush( );
+  if( cluster > 0 && fTree->GetEntries( ) % cluster == 0 ) SaveCheckPoint( );
+}
+
+void RUReader::SaveCheckPoint( )
+{
+  // The first cluster is always saved, so that even a short conversion leaves
+  // something readable; then once every kAutoSaveBytes.
+  if( fCheckPoints > 0 && fTree->GetZipBytes( ) - fSavedZipBytes < kAutoSaveBytes ) return;
+
+  fTree->AutoSave( "SaveSelf" );
+  fSavedZipBytes = fTree->GetZipBytes( );
+  ++fCheckPoints;
+}
+
+void RUReader::StartNewFile( )
+{
+  fFileNumber = fTree->GetFileNumber( );
+  fFileOut    = fTree->GetCurrentFile( );
+  fPartNames.push_back( fFileOut->GetName( ) );
+
+  std::ostringstream msg;
+  msg << "Output file larger than " << ( kMaxTreeBytes >> 30 ) << " GB, continuing in '"
+      << fFileOut->GetName( ) << "' (renamed to '" << RollOverName( fFileOutName, fFileNumber )
+      << "' at the end).";
+  ReportLine( msg.str( ) );
+
+  WriteRunInfo( );
+}
+
+std::string RUReader::RollOverName( const std::string& name, int number )
+{
+  const size_t slash = name.find_last_of( "/\\" );
+  const size_t dot   = name.find_last_of( '.' );
+  const std::string suffix = "_" + std::to_string( number );
+
+  if( dot == std::string::npos || ( slash != std::string::npos && dot < slash ) )
+    return name + suffix;
+  return name.substr( 0, dot ) + suffix + name.substr( dot );
+}
+
+void RUReader::WriteRunInfo( )
+{
+  TFile* file = fTree->GetCurrentFile( );
+
+  WriteMetadata( file );
+  if( fUseRunContext ) fRunContext.Write( file );
+
+  // The tree header goes in too, empty as it is, together with the directory
+  // of the file: from here on the file opens without recovery.
+  fTree->AutoSave( "SaveSelf" );
+  fSavedZipBytes = fTree->GetZipBytes( );
+  fCheckPoints   = 0;
+}
+
+// Metadata, so that the time stamps can be interpreted without guessing.
+void RUReader::WriteMetadata( TDirectory* where ) const
+{
+  TVectorD startEpoch( 1 );
+  startEpoch[0] = fStartTime;
+  where->WriteTObject( &startEpoch, "StartEpoch", "Overwrite" );
+
+  TNamed unit( "TimestampUnit", TimeUnitName( fTimeUnit ) );
+  where->WriteTObject( &unit, nullptr, "Overwrite" );
+
+  std::ostringstream boards;
+  for( int b = 0; b < kMaxBoards; ++b ){
+    if( !fBoards[b].present ) continue;
+    boards << b << ":" << fBoards[b].name << ":"
+           << ( fBoards[b].dppType == CAEN_DGTZ_DPPFirmware_PHA ? "PHA" : "PSD" ) << ":"
+           << fBoards[b].channels << ":" << fBoards[b].psPerTick << "ps;";
+  }
+  TNamed boardList( "Boards", boards.str( ).c_str( ) );
+  where->WriteTObject( &boardList, nullptr, "Overwrite" );
 }
 
 void RUReader::InitializeWave( )
@@ -491,9 +603,8 @@ bool RUReader::ReadHeader( std::ifstream& input, const std::string& fileName,
   }
 
   PrintBoardTable( );
-  InitializeROOT( );
 
-  return true;
+  return InitializeROOT( );
 }
 
 // ---------------------------------------------------------------------------
@@ -810,7 +921,7 @@ void RUReader::UnpackPHA( const uint32_t* buffer, uint32_t board, std::bitset<8>
         ReportLine( msg.str( ) );
       }
 
-      fTree->Fill( );
+      FillTree( );
 
       ++fStats.totalEvents;
       if( extras & kPhaFakeBit ) ++fStats.fakeEvents;
@@ -949,7 +1060,7 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
         ReportLine( msg.str( ) );
       }
 
-      fTree->Fill( );
+      FillTree( );
 
       ++fStats.totalEvents;
 
@@ -1211,6 +1322,10 @@ bool RUReader::ReadMultiple( const std::vector<std::string>& inputFiles, const s
 
   fFileOutName = out;
 
+  // The run context is small and read before anything else, so that it is
+  // the first thing written to the output file.
+  if( fUseRunContext ) fRunContext.Load( fRunContextDir );
+
   // Collect the files that actually carry data and the total size, so that the
   // progress bar covers the whole conversion and not a single file.
   std::vector<std::string> files;
@@ -1304,28 +1419,32 @@ void RUReader::Write( )
   std::cout << "Writing TTree with " << fTree->GetEntries( ) << " entries..." << std::endl;
   fTree->Write( 0, TObject::kOverwrite );
 
-  // Metadata, so that the time stamps can be interpreted without guessing.
-  TVectorD startEpoch( 1 );
-  startEpoch[0] = fStartTime;
-  startEpoch.Write( "StartEpoch" );
-
-  TNamed unit( "TimestampUnit", TimeUnitName( fTimeUnit ) );
-  unit.Write( );
-
-  std::ostringstream boards;
-  for( int b = 0; b < kMaxBoards; ++b ){
-    if( !fBoards[b].present ) continue;
-    boards << b << ":" << fBoards[b].name << ":"
-           << ( fBoards[b].dppType == CAEN_DGTZ_DPPFirmware_PHA ? "PHA" : "PSD" ) << ":"
-           << fBoards[b].channels << ":" << fBoards[b].psPerTick << "ps;";
-  }
-  TNamed boardList( "Boards", boards.str( ).c_str( ) );
-  boardList.Write( );
+  // Written at the start already; again here in case anything changed since.
+  WriteMetadata( fFileOut );
 
   std::cout << "Closing ROOT file..." << std::endl;
   fFileOut->Close( );
+  // The file owned the tree, which is gone with it.
+  delete fFileOut;
+  fFileOut = nullptr;
+  fTree    = nullptr;
 
-  std::cout << "Conversion completed successfully!" << std::endl;
+  // Only now do the files get their final name.
+  bool renamed = true;
+  for( size_t k = 0; k < fPartNames.size( ); ++k ){
+    const std::string final = ( k == 0 ) ? fFileOutName
+                                         : RollOverName( fFileOutName, static_cast<int>( k ) );
+    if( std::rename( fPartNames[k].c_str( ), final.c_str( ) ) != 0 ){
+      std::cerr << "ERROR: cannot rename '" << fPartNames[k] << "' to '" << final << "': "
+                << std::strerror( errno ) << std::endl;
+      renamed = false;
+    }
+    else if( fPartNames.size( ) > 1 ){
+      std::cout << "Wrote '" << final << "'." << std::endl;
+    }
+  }
+
+  if( renamed ) std::cout << "Conversion completed successfully!" << std::endl;
   PrintStatistics( );
 }
 

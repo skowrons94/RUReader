@@ -17,6 +17,7 @@
 #include <CAENDigitizerType.h>
 
 #include "DataFrame.h"
+#include "RunContext.h"
 
 // Unit of the time stamp written to the ROOT tree.
 enum class TimeUnit { Raw, Picosecond, Nanosecond, Microsecond, Millisecond, Second };
@@ -32,6 +33,15 @@ public:
   static constexpr int      kMaxChannels    = 16;  // largest DPP board handled here
   static constexpr uint32_t kAggHeaderWords = 4;   // board aggregate header size
 
+  // Output file. The baskets are flushed every ~30 MB of compressed data (one
+  // cluster) and the tree header is saved, with the file directory, at the end
+  // of a cluster once ~100 MB more have reached the disk, so that a conversion
+  // that is killed leaves a file ROOT can read up to the last save. A file
+  // larger than kMaxTreeBytes is continued in <name>_1.root, <name>_2.root...
+  static constexpr Long64_t kAutoFlushBytes = 30000000LL;
+  static constexpr Long64_t kAutoSaveBytes  = 100000000LL;
+  static constexpr Long64_t kMaxTreeBytes   = 10LL * 1024 * 1024 * 1024;
+
   RUReader( std::map<int,std::string> name = std::map<int,std::string>( ),
             bool ignoreFail       = false,
             bool forceDual        = false,
@@ -44,6 +54,9 @@ public:
   void SetCompressionAlgorithm( int algo ) { fCompressAlgo = algo; }
   void SetCompression( int level )       { fCompression = level; }
   void SetBufferSize( uint64_t bytes )   { fBufferWords = bytes / sizeof(uint32_t); }
+  // Directory holding the current.txt, stats.csv and metadata.json of the run.
+  void SetRunContext( const std::string& directory ) { fRunContextDir = directory;
+                                                       fUseRunContext = true; }
 
   // Returns false as soon as a file cannot be opened or its header is unusable.
   bool Read( const std::string& in, const std::string& out );
@@ -113,8 +126,22 @@ private:
 
   // ------------------------------------------------------------------- writing
 
-  void InitializeROOT( );
+  bool InitializeROOT( );
   void InitializeWave( );
+
+  // Fills the tree, then saves it when a cluster has just been flushed and
+  // follows the tree when it has rolled over to a new file.
+  void FillTree( );
+  void SaveCheckPoint( );
+  void StartNewFile( );
+
+  // What every output file carries from the start: the run metadata and the
+  // run context, followed by a save of the (still empty) tree.
+  void WriteRunInfo( );
+  void WriteMetadata( TDirectory* where ) const;
+
+  // Name ROOT gives to the n-th file of a roll-over, n > 0: run.root -> run_n.root.
+  static std::string RollOverName( const std::string& name, int number );
 
   // ----------------------------------------------------------------- utilities
 
@@ -156,6 +183,19 @@ private:
   TFile* fFileOut = nullptr;
   TTree* fTree    = nullptr;
   std::string fFileOutName;
+
+  // The output is written as <name>.part and renamed only once it has been
+  // closed, so that a file with the final name is always a complete one. On a
+  // roll-over ROOT names the next part itself (<name>_1.part, ...); the names
+  // are recorded here as they appear.
+  std::vector<std::string> fPartNames;
+  int      fFileNumber    = 0;     // roll-overs followed so far
+  Long64_t fSavedZipBytes = 0;     // compressed bytes on disk at the last save
+  int      fCheckPoints   = 0;     // saves done in the current file
+
+  bool        fUseRunContext = false;
+  std::string fRunContextDir;
+  RunContext  fRunContext;
 
   bool     fPu        = false;
   bool     fSatu      = false;
