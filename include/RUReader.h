@@ -251,6 +251,8 @@ private:
     uint64_t deadTimeEvents   = 0;   // events preceded by dead time
     uint64_t saturatedEvents  = 0;   // input stage (and/or trapezoid) saturated
     uint64_t lostTriggerTags  = 0;   // LOST_TRG tags; one per N lost triggers
+    uint64_t noTimeStampEvents = 0;  // events without a time stamp word
+    uint64_t noEnergyEvents   = 0;   // events without an energy/charge word
     std::chrono::steady_clock::time_point startTime;
     std::chrono::steady_clock::time_point endTime;
   } fStats;

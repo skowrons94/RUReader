@@ -87,6 +87,9 @@ void DataFrame::ResolveLayout( )
 
   l.dualTrace     = Enabled( "DT" );
   l.hasTrace      = Enabled( "Trace" );
+  l.hasTS         = Enabled( "TS" );
+  l.hasEnergy     = Enabled( "Energy" );
+  l.hasCharge     = Enabled( "Charge" );
   l.hasChannelBit = HasFormat( "CH" );
   l.numSamples    = Config( "NumSamples" );
 
@@ -116,9 +119,9 @@ void DataFrame::ResolveLayout( )
 
   // Event size, in 32 bit words.
   uint16_t size = 0;
-  if( Enabled( "Energy" ) ) size += 1;
-  if( Enabled( "Charge" ) ) size += 1;
-  if( Enabled( "TS"     ) ) size += 1;
+  if( l.hasEnergy         ) size += 1;
+  if( l.hasCharge         ) size += 1;
+  if( l.hasTS             ) size += 1;
   if( l.hasExtras         ) size += 1;
   if( l.hasTrace          ) size += l.numSamples / 2;
   l.evtSize = size;

@@ -23,6 +23,9 @@ struct DataLayout {
 
   bool dualTrace      = false;  // two analog traces interleaved in one word pair
   bool hasTrace       = false;
+  bool hasTS          = false;  // the time stamp word is present (first word)
+  bool hasEnergy      = false;  // PHA: the energy word is present (last word)
+  bool hasCharge      = false;  // PSD: the charge word is present (last word)
   bool hasExtras      = false;  // the extra word is present in the event
   bool hasChannelBit  = false;  // odd/even channel of the couple is in the TS word
   bool extrasConfig   = false;  // the extras format is selected by the format word

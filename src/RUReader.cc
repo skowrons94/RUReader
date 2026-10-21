@@ -848,13 +848,21 @@ void RUReader::UnpackPHA( const uint32_t* buffer, uint32_t board, std::bitset<8>
 
       const uint32_t ev = base + evt * layout.evtSize;
 
-      const uint32_t timeWord   = buffer[ev];
-      const uint32_t energyWord = buffer[ev + layout.evtSize - 1];
+      // The event is [time stamp] [trace] [extras] [energy], each part only
+      // when the format word enables it. A board whose Board Configuration
+      // leaves out the time stamp or the energy sends the trace alone, and its
+      // samples must not be read as either.
+      const uint32_t timeWord   = layout.hasTS     ? buffer[ev] : 0;
+      const uint32_t energyWord = layout.hasEnergy ? buffer[ev + layout.evtSize - 1] : 0;
+      const uint32_t extrasPos  = ev + layout.evtSize - 1 - ( layout.hasEnergy ? 1 : 0 );
+      if( !layout.hasTS     ) ++fStats.noTimeStampEvents;
+      if( !layout.hasEnergy ) ++fStats.noEnergyEvents;
 
       const uint64_t rawTS  = ExtractBits( timeWord, layout.fmtTS );
       const uint32_t extras = ExtractBits( energyWord, layout.fmtExtras );
 
       uint32_t channel = couples[cpl];
+      // Without a time stamp word the odd/even bit is unknown: the even channel.
       if( layout.hasChannelBit ) channel = ( ( timeWord >> 31 ) & 0x1 ) + couples[cpl] * 2;
 
       if( channel >= kMaxChannels ){ ++fStats.droppedEvents; continue; }
@@ -881,7 +889,7 @@ void RUReader::UnpackPHA( const uint32_t* buffer, uint32_t board, std::bitset<8>
       int      fineBits     = 0;
 
       if( layout.hasExtras ){
-        extras2 = buffer[ev + layout.evtSize - 2];
+        extras2 = buffer[extrasPos];
 
         switch( layout.extrasMode ){
           case 0:  // extended time stamp [31:16], baseline*4 [15:0]
@@ -909,10 +917,13 @@ void RUReader::UnpackPHA( const uint32_t* buffer, uint32_t board, std::bitset<8>
       fExtras2   = extras2;
       fQShort    = 0;
       fQLong     = 0;
-      fTimeStamp = BuildTimeStamp( board, channel, rawTS, extendedTS, extendedBits,
-                                   rollOverMarker, fineTS, fineBits );
+      // Without a time stamp word there is nothing to rebuild, and feeding a
+      // 0 to the roll-over tracking would only invent wraps.
+      fTimeStamp = layout.hasTS ? BuildTimeStamp( board, channel, rawTS, extendedTS, extendedBits,
+                                                  rollOverMarker, fineTS, fineBits )
+                                : 0;
 
-      if( layout.hasTrace ) UnpackWave( buffer, layout, ev, board );
+      if( layout.hasTrace ) UnpackWave( buffer, layout, ev + ( layout.hasTS ? 1 : 0 ), board );
 
       if( fVerbose > 1 ){
         std::ostringstream msg;
@@ -975,12 +986,17 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
 
       const uint32_t ev = base + evt * layout.evtSize;
 
-      const uint32_t timeWord   = buffer[ev];
-      const uint32_t chargeWord = buffer[ev + layout.evtSize - 1];
+      // As for PHA: [time stamp] [trace] [extras] [charge], each part optional.
+      const uint32_t timeWord   = layout.hasTS     ? buffer[ev] : 0;
+      const uint32_t chargeWord = layout.hasCharge ? buffer[ev + layout.evtSize - 1] : 0;
+      const uint32_t extrasPos  = ev + layout.evtSize - 1 - ( layout.hasCharge ? 1 : 0 );
+      if( !layout.hasTS     ) ++fStats.noTimeStampEvents;
+      if( !layout.hasCharge ) ++fStats.noEnergyEvents;
 
       const uint64_t rawTS = ExtractBits( timeWord, layout.fmtTS );
 
       uint32_t channel = couples[cpl];
+      // Without a time stamp word the odd/even bit is unknown: the even channel.
       if( layout.hasChannelBit ) channel = ( ( timeWord >> 31 ) & 0x1 ) + couples[cpl] * 2;
 
       if( channel >= kMaxChannels ){ ++fStats.droppedEvents; continue; }
@@ -1000,7 +1016,7 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
       int      fineBits     = 0;
 
       if( layout.hasExtras ){
-        extras2 = buffer[ev + layout.evtSize - 2];
+        extras2 = buffer[extrasPos];
 
         if( layout.extrasConfig ){
           switch( layout.extrasMode ){
@@ -1048,10 +1064,11 @@ void RUReader::UnpackPSD( const uint32_t* buffer, uint32_t board, std::bitset<8>
       fEnergies  = 0;
       fExtras    = flags;
       fExtras2   = extras2;
-      fTimeStamp = BuildTimeStamp( board, channel, rawTS, extendedTS, extendedBits,
-                                   false, fineTS, fineBits );
+      fTimeStamp = layout.hasTS ? BuildTimeStamp( board, channel, rawTS, extendedTS, extendedBits,
+                                                  false, fineTS, fineBits )
+                                : 0;
 
-      if( layout.hasTrace ) UnpackWave( buffer, layout, ev, board );
+      if( layout.hasTrace ) UnpackWave( buffer, layout, ev + ( layout.hasTS ? 1 : 0 ), board );
 
       if( fVerbose > 1 ){
         std::ostringstream msg;
@@ -1085,6 +1102,8 @@ int RUReader::PreferredWave( int board ) const
   return it->second;
 }
 
+// pos is the first word of the trace, right after the time stamp word when
+// there is one.
 void RUReader::UnpackWave( const uint32_t* buffer, const DataLayout& layout, uint32_t pos, uint32_t board )
 {
   if( !fWaveInitialized ) InitializeWave( );
@@ -1120,7 +1139,7 @@ void RUReader::UnpackWave( const uint32_t* buffer, const DataLayout& layout, uin
     Short_t* d22 = fDigital22->GetArray( );
 
     for( int idx = 0; idx < nWords; ++idx ){
-      const uint32_t word = buffer[pos + 1 + idx];
+      const uint32_t word = buffer[pos + idx];
       w1[idx]  = static_cast<Short_t>( ExtractBits( word, sampleLo     , sampleHi      ) );
       w2[idx]  = static_cast<Short_t>( ExtractBits( word, sampleLo + 16, sampleHi + 16 ) );
       d11[idx] = static_cast<Short_t>( ExtractBits( word, dp1Lo        , dp1Hi         ) );
@@ -1148,7 +1167,7 @@ void RUReader::UnpackWave( const uint32_t* buffer, const DataLayout& layout, uin
     Short_t* d2 = fDigital21->GetArray();
 
     for( int idx = 0; idx < nWords; ++idx){
-      const uint32_t word = buffer[pos + 1 + idx];
+      const uint32_t word = buffer[pos + idx];
       w1[idx] = static_cast<Short_t>( ExtractBits( word, sampleLo + shift, sampleHi + shift) );
       d1[idx] = static_cast<Short_t>( ExtractBits( word, dp1Lo + shift, dp1Hi + shift) );
       d2[idx] = static_cast<Short_t>( ExtractBits( word, dp2Lo + shift, dp2Hi + shift) );
@@ -1174,7 +1193,7 @@ void RUReader::UnpackWave( const uint32_t* buffer, const DataLayout& layout, uin
     Short_t* d2 = fDigital21->GetArray( );
 
     for( int idx = 0; idx < nWords; ++idx ){
-      const uint32_t word = buffer[pos + 1 + idx];
+      const uint32_t word = buffer[pos + idx];
       w1[2*idx]     = static_cast<Short_t>( ExtractBits( word, sampleLo     , sampleHi      ) );
       w1[2*idx + 1] = static_cast<Short_t>( ExtractBits( word, sampleLo + 16, sampleHi + 16 ) );
       d1[2*idx]     = static_cast<Short_t>( ExtractBits( word, dp1Lo        , dp1Hi         ) );
@@ -1603,6 +1622,18 @@ void RUReader::PrintStatistics( ) const
     out << "  Lost-trigger tags:  " << fStats.lostTriggerTags
         << " (one per N lost triggers, N from 0x1nA0[17:16], default 1024)\n";
 
+  if( fStats.noTimeStampEvents )
+    out << "  WARNING: " << fStats.noTimeStampEvents << " event(s) without a time stamp word,"
+        << " written with Timestamp = 0\n"
+        << "           (on 16 channel boards, as the even channel of the couple).\n"
+        << "           The board does not record time stamps/energies: Board Configuration\n"
+        << "           0x8000 bits 18/19 are off.\n";
+  if( fStats.noEnergyEvents )
+    out << "  WARNING: " << fStats.noEnergyEvents << " event(s) without an energy (PHA) or"
+        << " charge (PSD) word,\n"
+        << "           written with Energy = 0 (EnergyShort = EnergyLong = 0) and PU = 0.\n"
+        << "           The board does not record time stamps/energies: Board Configuration\n"
+        << "           0x8000 bits 18/19 are off.\n";
   if( fStats.failedBoards > 0 )
     out << "  WARNING: " << fStats.failedBoards << " board failure(s) detected!\n";
   if( corruptedRate > 1.0 )
