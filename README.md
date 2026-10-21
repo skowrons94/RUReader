@@ -96,11 +96,12 @@ reported):
 | `RunMetadata` | `TNamed` | `metadata.json`, verbatim (the title is the JSON text) |
 | `AccumulatedCharge_metadata` | `TParameter<double>` | the `"Accumulated Charge"` value of `metadata.json`, as WebDAQ stores it |
 | `Run/<field>` | `TParameter<double>` or `TNamed` | every top-level field of `metadata.json` that is a number (`TParameter`) or a string (`TNamed`): run number, start and stop time, target, voltages, run type, flag, notes... Names as in the file with anything but letters and digits turned into `_` (`Run/Target_Name`, `Run/Terminal_Voltage`) |
-| `RunFiles/<file name>` | `TNamed` | every other `.json` and `.cal` file of the directory, verbatim (the title is the text): each board's register dump, its energy calibration, the ROIs, the coincidence gates |
+| `RunFiles/<file name>` | `TNamed` | every other `.json`, `.cal` and `.jsonl` file of the directory, verbatim (the title is the text): each board's register dump, its energy calibration, the ROIs, the coincidence gates and histogram settings, the calibration and register changes made during the run |
 | `Current/Current`, `Current/Current_<n>` | `TGraph` | `current.txt`: current [µA] against time since the start of the run [s], one graph per current column |
 | `Current/AccumulatedCharge_uC[_<n>]` | `TParameter<double>` | charge in µC (µA·s) over the run, from its start to its stop (`metadata.json`): readings joined by straight lines, the first held back to the start and the last up to the stop, steps with dt <= 0 skipped. The same number WebDAQ records live and shows on its Data page |
 | `Current/MeanCurrent_uA[_<n>]`, `Current/Duration_s` | `TParameter<double>` | charge / duration, and the span the charge covers |
 | `Current/ChargeSpan` | `TNamed` | `run`, or `readings` when the run's start or stop time is unknown and the charge spans the first to the last reading |
+| `Current/Uncovered_s` | `TParameter<double>` | seconds of the span with no current reading for more than 10 s (the monitor was silent); that time is left out of the charge, as WebDAQ does |
 | `Current/StartTime` | `TNamed` | the `### Start time: ... ###` line |
 | `Stats/<alias>` | `TGraph` | `stats.csv`: one graph per metric, named after its alias (letters, digits and `_` only), titled `<alias> [unit]` |
 | `Stats/<alias>_source` | `TNamed` | the Graphite path of the metric |

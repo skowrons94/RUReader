@@ -63,6 +63,7 @@ private:
   std::vector<Series> fCurrents;
   std::vector<double> fCharges;                // uC (uA x s), one per column
   double              fCurrentDuration = 0;    // span the charge covers, s
+  double              fUncovered = 0;          // of it, s with no reading (left out of the charge)
   bool                fChargeOverRun = false;  // the span is the run, not the readings
 
   // -------------------------------------------------------------- stats.csv

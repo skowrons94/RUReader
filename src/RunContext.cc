@@ -299,6 +299,11 @@ bool RunContext::LoadCurrent( const std::string& path )
                    && ParseWallClock( fRunStop, stop ) && stop > start;
   if( fChargeOverRun ){ lo = static_cast<double>( start - origin ); hi = static_cast<double>( stop - origin ); }
 
+  // A stretch longer than kMaxGap without a reading means the monitor was
+  // silent: that time is left out of the charge (and reported), not filled
+  // in by a line or a held value — the same rule as WebDAQ (MAX_GAP_S).
+  const double kMaxGap = 10.0;
+  fUncovered = 0;
   fCharges.assign( nChannels, 0.0 );
   for( size_t i = 1; i < rows.size( ); ++i ){
     const double t0 = rows[i-1][0], t1 = rows[i][0];
@@ -306,14 +311,19 @@ bool RunContext::LoadCurrent( const std::string& path )
     if( dt <= 0 ) continue;
     const double s0 = std::max( t0, lo ), s1 = std::min( t1, hi );
     if( s1 <= s0 ) continue;
+    if( dt > kMaxGap ){ fUncovered += s1 - s0; continue; }
     for( size_t c = 0; c < nChannels; ++c ){
       const double v0 = rows[i-1][c+1], slope = ( rows[i][c+1] - v0 ) / dt;
       fCharges[c] += 0.5 * ( ( v0 + slope * ( s0 - t0 ) ) + ( v0 + slope * ( s1 - t0 ) ) ) * ( s1 - s0 );
     }
   }
+  const double head = lo < rows.front( )[0] ? std::min( rows.front( )[0], hi ) - lo : 0.0;
+  const double tail = hi > rows.back( )[0]  ? hi - std::max( rows.back( )[0], lo ) : 0.0;
+  if( head > kMaxGap ) fUncovered += head;
+  if( tail > kMaxGap ) fUncovered += tail;
   for( size_t c = 0; c < nChannels; ++c ){
-    if( lo < rows.front( )[0] ) fCharges[c] += rows.front( )[c+1] * ( std::min( rows.front( )[0], hi ) - lo );
-    if( hi > rows.back( )[0] )  fCharges[c] += rows.back( )[c+1]  * ( hi - std::max( rows.back( )[0], lo ) );
+    if( head > 0 && head <= kMaxGap ) fCharges[c] += rows.front( )[c+1] * head;
+    if( tail > 0 && tail <= kMaxGap ) fCharges[c] += rows.back( )[c+1]  * tail;
   }
   fCurrentDuration = hi > lo ? hi - lo : 0.0;
 
@@ -323,6 +333,9 @@ bool RunContext::LoadCurrent( const std::string& path )
     std::cout << ", accumulated charge " << fCharges[0] << " uC over "
               << ( fChargeOverRun ? "the run" : "the readings" );
   std::cout << std::endl;
+  if( fUncovered >= 1 )
+    std::cout << "  Warning: no current reading for " << fUncovered
+              << " s of the run; that time is not in the charge" << std::endl;
 
   return true;
 }
@@ -499,7 +512,7 @@ bool RunContext::LoadRunFiles( const std::string& directory )
       return name.size( ) > n && name.compare( name.size( ) - n, n, suffix ) == 0;
     };
     if( name == kMetadataFile ) continue;            // already in RunMetadata
-    if( endsWith( ".json" ) || endsWith( ".cal" ) ) names.push_back( name );
+    if( endsWith( ".json" ) || endsWith( ".cal" ) || endsWith( ".jsonl" ) ) names.push_back( name );
   }
   closedir( dir );
   std::sort( names.begin( ), names.end( ) );
@@ -598,6 +611,8 @@ void RunContext::Write( TDirectory* where ) const
     dir->WriteTObject( &duration, nullptr, "Overwrite" );
     TNamed span( "ChargeSpan", fChargeOverRun ? "run" : "readings" );
     dir->WriteTObject( &span, nullptr, "Overwrite" );
+    TParameter<double> uncovered( "Uncovered_s", fUncovered );
+    dir->WriteTObject( &uncovered, nullptr, "Overwrite" );
 
     if( !fCurrentStart.empty( ) ){
       TNamed start( "StartTime", fCurrentStart.c_str( ) );
