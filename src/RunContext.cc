@@ -2,7 +2,9 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <fstream>
 #include <iostream>
 #include <set>
@@ -96,6 +98,80 @@ namespace {
     return unique;
   }
 
+  // A local wall-clock time, "2026-10-21 10:24:02.730670" or
+  // "2026-10-21T10:24:02.775837[+02:00]", in seconds on a day count that is the
+  // same for every such time (the UTC offset is ignored: all of them are the
+  // local time of the DAQ machine). False if it is not one.
+  bool ParseWallClock( const std::string& text, long double& seconds )
+  {
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0;
+    double s = 0;
+    char sep = 0;
+    if( std::sscanf( text.c_str( ), "%d-%d-%d%c%d:%d:%lf", &y, &mo, &d, &sep, &h, &mi, &s ) != 7 )
+      return false;
+    if( sep != ' ' && sep != 'T' ) return false;
+    // Days from the civil date (H. Hinnant's algorithm), no time zone involved.
+    y -= mo <= 2;
+    const long era = ( y >= 0 ? y : y - 399 ) / 400;
+    const long yoe = y - era * 400;
+    const long doy = ( 153 * ( mo + ( mo > 2 ? -3 : 9 ) ) + 2 ) / 5 + d - 1;
+    const long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const long days = era * 146097 + doe;
+    seconds = days * 86400.0L + h * 3600.0L + mi * 60.0L + s;
+    return true;
+  }
+
+  // The scalar fields at the top level of metadata.json — strings, numbers,
+  // true/false/null — in file order. Objects and arrays (the board list...)
+  // are skipped: they stay readable in RunMetadata, the file verbatim.
+  struct JsonField { std::string key, value; bool isString; };
+
+  std::vector<JsonField> JsonTopLevel( const std::string& json )
+  {
+    std::vector<JsonField> fields;
+    auto readString = [&json]( size_t& i ){        // json[i] == '"' on entry
+      std::string out;
+      for( ++i; i < json.size( ) && json[i] != '"'; ++i ){
+        if( json[i] == '\\' && i + 1 < json.size( ) ) ++i;
+        out += json[i];
+      }
+      return out;                                  // i on the closing quote
+    };
+
+    size_t i = json.find( '{' );
+    if( i == std::string::npos ) return fields;
+    for( ++i; i < json.size( ); ++i ){
+      if( json[i] == '}' ) break;
+      if( json[i] != '"' ) continue;
+      const std::string key = readString( i );
+      i = json.find_first_not_of( " \t\r\n", i + 1 );
+      if( i == std::string::npos || json[i] != ':' ) break;
+      i = json.find_first_not_of( " \t\r\n", i + 1 );
+      if( i == std::string::npos ) break;
+
+      if( json[i] == '"' ){
+        fields.push_back( { key, readString( i ), true } );
+      }
+      else if( json[i] == '{' || json[i] == '[' ){
+        int depth = 0;                             // skip the whole value
+        bool inString = false;
+        for( ; i < json.size( ); ++i ){
+          const char c = json[i];
+          if( inString ){ if( c == '\\' ) ++i; else if( c == '"' ) inString = false; continue; }
+          if( c == '"' ) inString = true;
+          else if( c == '{' || c == '[' ) ++depth;
+          else if( ( c == '}' || c == ']' ) && --depth == 0 ) break;
+        }
+      }
+      else {
+        const size_t end = json.find_first_of( ",}\r\n", i );
+        fields.push_back( { key, Trim( json.substr( i, end - i ) ), false } );
+        i = ( end == std::string::npos ? json.size( ) : end ) - 1;
+      }
+    }
+    return fields;
+  }
+
   // Writes and forgets a sub directory. Its key list is saved now, so that a
   // crash later on still leaves it readable; and it must not stay in the list
   // of the file, because a TTree roll-over to a new file moves every object of
@@ -119,9 +195,11 @@ void RunContext::Load( const std::string& directory )
   std::cout << "Looking for the run context (" << kCurrentFile << ", " << kStatsFile
             << ", " << kMetadataFile << ") in '" << dir << "'..." << std::endl;
 
+  // The run record first: the charge is counted over the run it describes.
+  fHasMetadata = LoadMetadata( dir + "/" + kMetadataFile );
   fHasCurrent  = LoadCurrent ( dir + "/" + kCurrentFile  );
   fHasStats    = LoadStats   ( dir + "/" + kStatsFile    );
-  fHasMetadata = LoadMetadata( dir + "/" + kMetadataFile );
+  LoadRunFiles( dir );
 }
 
 // current.txt, as the TetrAMM and RBD 9103 loggers write it:
@@ -207,21 +285,43 @@ bool RunContext::LoadCurrent( const std::string& path )
     for( const std::vector<double>& row : rows ) series.values.push_back( row[c+1] );
   }
 
-  // Trapezoidal rule. The current is in uA against seconds, so the integral is
-  // in uC. A step that does not move forward (a clock jump, a duplicated time
-  // stamp) is skipped rather than counted as negative charge.
+  // The charge belongs to the run from its start to its stop, as WebDAQ
+  // counts it live and on its Data page (integrate_current in run_data.py):
+  // the readings joined by straight lines, the first held back to the start
+  // and the last held up to the stop, readings outside the run counted only
+  // inside it. The run times come from metadata.json, in the time of this
+  // file; without them the charge spans the first to the last reading. The
+  // current is in uA against seconds, so the integral is in uC. A step that
+  // does not move forward (a clock jump, a duplicated time stamp) is skipped.
+  double lo = rows.front( )[0], hi = rows.back( )[0];
+  long double origin = 0, start = 0, stop = 0;   // ~1e11 s: a double would lose the microseconds
+  fChargeOverRun = ParseWallClock( fCurrentStart, origin ) && ParseWallClock( fRunStart, start )
+                   && ParseWallClock( fRunStop, stop ) && stop > start;
+  if( fChargeOverRun ){ lo = static_cast<double>( start - origin ); hi = static_cast<double>( stop - origin ); }
+
   fCharges.assign( nChannels, 0.0 );
   for( size_t i = 1; i < rows.size( ); ++i ){
-    const double dt = rows[i][0] - rows[i-1][0];
+    const double t0 = rows[i-1][0], t1 = rows[i][0];
+    const double dt = t1 - t0;
     if( dt <= 0 ) continue;
-    for( size_t c = 0; c < nChannels; ++c )
-      fCharges[c] += 0.5 * ( rows[i][c+1] + rows[i-1][c+1] ) * dt;
+    const double s0 = std::max( t0, lo ), s1 = std::min( t1, hi );
+    if( s1 <= s0 ) continue;
+    for( size_t c = 0; c < nChannels; ++c ){
+      const double v0 = rows[i-1][c+1], slope = ( rows[i][c+1] - v0 ) / dt;
+      fCharges[c] += 0.5 * ( ( v0 + slope * ( s0 - t0 ) ) + ( v0 + slope * ( s1 - t0 ) ) ) * ( s1 - s0 );
+    }
   }
-  fCurrentDuration = rows.size( ) > 1 ? rows.back( )[0] - rows.front( )[0] : 0.0;
+  for( size_t c = 0; c < nChannels; ++c ){
+    if( lo < rows.front( )[0] ) fCharges[c] += rows.front( )[c+1] * ( std::min( rows.front( )[0], hi ) - lo );
+    if( hi > rows.back( )[0] )  fCharges[c] += rows.back( )[c+1]  * ( hi - std::max( rows.back( )[0], lo ) );
+  }
+  fCurrentDuration = hi > lo ? hi - lo : 0.0;
 
   std::cout << "  " << kCurrentFile << ": " << rows.size( ) << " sample(s), "
             << nChannels << " current column(s), " << fCurrentDuration << " s";
-  if( rows.size( ) > 1 ) std::cout << ", accumulated charge " << fCharges[0] << " uC";
+  if( rows.size( ) > 1 || fChargeOverRun )
+    std::cout << ", accumulated charge " << fCharges[0] << " uC over "
+              << ( fChargeOverRun ? "the run" : "the readings" );
   std::cout << std::endl;
 
   return true;
@@ -360,27 +460,65 @@ bool RunContext::LoadMetadata( const std::string& path )
     return false;
   }
 
-  const std::string key = "\"Accumulated Charge\"";
-  const size_t at = fMetadata.find( key );
-  if( at != std::string::npos ){
-    size_t pos = fMetadata.find_first_not_of( " \t\r\n", at + key.size( ) );
-    if( pos != std::string::npos && fMetadata[pos] == ':' ){
-      const char* start = fMetadata.c_str( ) + pos + 1;
-      char* end = nullptr;
-      const double value = std::strtod( start, &end );
-      // null, a string or anything else that is not a number is left out.
-      if( end != start ){
+  for( const JsonField& f : JsonTopLevel( fMetadata ) ){
+    fRunFields.push_back( { f.key, f.value, f.isString } );
+    if( f.key == "Start Time" && f.isString ) fRunStart = f.value;
+    if( f.key == "Stop Time"  && f.isString ) fRunStop  = f.value;
+    if( f.key == "Accumulated Charge" && !f.isString ){
+      double value = 0;
+      // null, or anything else that is not a number, is left out.
+      if( ParseNumber( f.value, value ) ){
         fMetadataCharge    = value;
         fHasMetadataCharge = true;
       }
     }
   }
 
-  std::cout << "  " << kMetadataFile << ": " << fMetadata.size( ) << " bytes";
+  std::cout << "  " << kMetadataFile << ": " << fMetadata.size( ) << " bytes, "
+            << fRunFields.size( ) << " field(s)";
   if( fHasMetadataCharge ) std::cout << ", Accumulated Charge " << fMetadataCharge;
   std::cout << std::endl;
 
   return true;
+}
+
+// Every other .json and .cal file of the run directory, verbatim: WebDAQ
+// copies the boards' register dumps, their energy calibrations, the ROIs and
+// the coincidence gates there, and the data cannot be interpreted without
+// them. Small text files; anything over 16 MB is not one of them and is left.
+bool RunContext::LoadRunFiles( const std::string& directory )
+{
+  DIR* dir = opendir( directory.c_str( ) );
+  if( !dir ) return false;
+
+  std::vector<std::string> names;
+  while( dirent* entry = readdir( dir ) ){
+    const std::string name = entry->d_name;
+    auto endsWith = [&name]( const char* suffix ){
+      const size_t n = std::strlen( suffix );
+      return name.size( ) > n && name.compare( name.size( ) - n, n, suffix ) == 0;
+    };
+    if( name == kMetadataFile ) continue;            // already in RunMetadata
+    if( endsWith( ".json" ) || endsWith( ".cal" ) ) names.push_back( name );
+  }
+  closedir( dir );
+  std::sort( names.begin( ), names.end( ) );
+
+  for( const std::string& name : names ){
+    std::ifstream input( ( directory + "/" + name ).c_str( ) );
+    if( !input.is_open( ) ) continue;
+    std::ostringstream text;
+    text << input.rdbuf( );
+    if( text.str( ).size( ) > ( 16u << 20 ) ) continue;
+    fRunFiles.push_back( { name, text.str( ) } );
+  }
+
+  if( !fRunFiles.empty( ) ){
+    std::cout << "  run files:";
+    for( const File& f : fRunFiles ) std::cout << " " << f.name;
+    std::cout << std::endl;
+  }
+  return !fRunFiles.empty( );
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +539,34 @@ void RunContext::Write( TDirectory* where ) const
       TParameter<double> charge( "AccumulatedCharge_metadata", fMetadataCharge );
       where->WriteTObject( &charge, nullptr, "Overwrite" );
     }
+
+    // The same fields one by one, so that a macro reads the target or the
+    // terminal voltage without parsing JSON. Each object's title is the field
+    // name as WebDAQ wrote it.
+    TDirectory* dir = where->mkdir( "Run", "Run record (metadata.json)", kTRUE );
+    std::set<std::string> used;
+    for( const Field& f : fRunFields ){
+      const std::string name = RootName( f.key, used );
+      double number = 0;
+      if( !f.isString && ParseNumber( f.value, number ) ){
+        TParameter<double> value( name.c_str( ), number );
+        dir->WriteTObject( &value, nullptr, "Overwrite" );
+      }
+      else {
+        TNamed value( name.c_str( ), f.value.c_str( ) );
+        dir->WriteTObject( &value, nullptr, "Overwrite" );
+      }
+    }
+    CloseDirectory( dir );
+  }
+
+  if( !fRunFiles.empty( ) ){
+    TDirectory* dir = where->mkdir( "RunFiles", "Configuration files of the run, verbatim", kTRUE );
+    for( const File& f : fRunFiles ){
+      TNamed file( f.name.c_str( ), f.text.c_str( ) );
+      dir->WriteTObject( &file, nullptr, "Overwrite" );
+    }
+    CloseDirectory( dir );
   }
 
   if( fHasCurrent ){
@@ -417,8 +583,8 @@ void RunContext::Write( TDirectory* where ) const
       graph.GetYaxis( )->SetTitle( "Current [#muA]" );
       dir->WriteTObject( &graph, nullptr, "Overwrite" );
 
-      // The charge needs two samples at least, as in WebDAQ.
-      if( fCurrentTimes.size( ) < 2 ) continue;
+      // The charge needs two samples at least, or the run's start and stop.
+      if( fCurrentTimes.size( ) < 2 && !fChargeOverRun ) continue;
 
       const std::string suffix = ( c == 0 ) ? "" : "_" + std::to_string( c );
       TParameter<double> charge( ( "AccumulatedCharge_uC" + suffix ).c_str( ), fCharges[c] );
@@ -430,6 +596,8 @@ void RunContext::Write( TDirectory* where ) const
 
     TParameter<double> duration( "Duration_s", fCurrentDuration );
     dir->WriteTObject( &duration, nullptr, "Overwrite" );
+    TNamed span( "ChargeSpan", fChargeOverRun ? "run" : "readings" );
+    dir->WriteTObject( &span, nullptr, "Overwrite" );
 
     if( !fCurrentStart.empty( ) ){
       TNamed start( "StartTime", fCurrentStart.c_str( ) );

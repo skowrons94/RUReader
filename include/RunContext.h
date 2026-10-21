@@ -31,7 +31,10 @@ public:
   //   AccumulatedCharge_metadata    TParameter<double>, "Accumulated Charge" of
   //                                 metadata.json, in the unit WebDAQ stores it
   //   Current/Current[_n]           TGraph, current [uA] vs time [s], per column
-  //   Current/AccumulatedCharge_uC[_n], MeanCurrent_uA[_n], Duration_s, StartTime
+  //   Current/AccumulatedCharge_uC[_n], MeanCurrent_uA[_n], Duration_s, StartTime,
+//                                 ChargeSpan ("run": from the run's start to its
+//                                 stop, as WebDAQ counts it; "readings": first
+//                                 to last reading, when the run times are unknown)
   //   Stats/<alias>                 TGraph per metric, titled "<alias> [unit]"
   //   Stats/<alias>_source          TNamed, the Graphite path of the metric
   //   Stats/StartTime               TNamed
@@ -48,6 +51,7 @@ private:
   };
 
   bool LoadCurrent ( const std::string& path );
+  bool LoadRunFiles( const std::string& directory );
   bool LoadStats   ( const std::string& path );
   bool LoadMetadata( const std::string& path );
 
@@ -58,7 +62,8 @@ private:
   std::vector<double> fCurrentTimes;
   std::vector<Series> fCurrents;
   std::vector<double> fCharges;                // uC (uA x s), one per column
-  double              fCurrentDuration = 0;    // last minus first time, s
+  double              fCurrentDuration = 0;    // span the charge covers, s
+  bool                fChargeOverRun = false;  // the span is the run, not the readings
 
   // -------------------------------------------------------------- stats.csv
 
@@ -73,6 +78,14 @@ private:
   std::string         fMetadata;
   bool                fHasMetadataCharge = false;
   double              fMetadataCharge = 0;
+  struct Field { std::string key, value; bool isString; };
+  std::vector<Field>  fRunFields;              // top-level scalars of metadata.json
+  std::string         fRunStart, fRunStop;     // "Start Time", "Stop Time"
+
+  // ------------------------------------------------------- other run files
+
+  struct File { std::string name, text; };
+  std::vector<File>   fRunFiles;
 
 };
 
